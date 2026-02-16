@@ -44,9 +44,9 @@ const app = express();
  * PRODUCTION NODE CONFIGURATION
  * Using values from provided environment
  */
-const PORT = process.env.PORT || 3001;
+const PORT = parseInt(process.env.PORT || '3001', 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BASE_URL = process.env.BASE_URL || `https://${process.env.HOST || 'localhost'}:${PORT}`;
+const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${PORT}`;
 
 // Middleware configuration
 app.use(cors({
@@ -533,7 +533,7 @@ app.get('/', (req, res) => {
   res.send('SimpleClaw Production Node: ONLINE & OPERATIONAL');
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`
   --------------------------------------------------
   ✅ SIMPLECLAW BACKEND ONLINE
