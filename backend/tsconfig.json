@@ -18,7 +18,6 @@
     "noEmit": false,
     "moduleDetection": "force",
     "allowImportingTsExtensions": false,
-    "resolveJsonModule": true,
     "declaration": false
   },
   "include": ["**/*.ts"],
