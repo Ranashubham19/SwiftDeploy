@@ -45,7 +45,7 @@ const app = express();
  * Using values from provided environment
  */
 
-const PORT = parseInt(process.env.PORT || '8080', 10);
+const PORT = parseInt(process.env.PORT || "8080", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${PORT}`;
 
@@ -532,7 +532,7 @@ app.get('/dashboard/data', requireAuth, (req, res) => {
 
 // Log required environment variables at startup
 console.log('=== Environment Variables Loaded ===');
-console.log('PORT:', parseInt(process.env.PORT || '8080', 10));
+console.log('PORT:', PORT);
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('BASE_URL:', BASE_URL);
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
@@ -558,5 +558,5 @@ process.on('uncaughtException', (error) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${parseInt(process.env.PORT || '8080', 10)}`);
+  console.log(`Server running on port ${PORT}`);
 });
