@@ -44,9 +44,9 @@ const app = express();
  * PRODUCTION NODE CONFIGURATION
  * Using values from provided environment
  */
-const PORT = parseInt(process.env.PORT || '8080', 10);
+
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${PORT}`;
+const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${parseInt(process.env.PORT || '8080', 10)}`;
 
 // Middleware configuration
 app.use(cors({
@@ -80,7 +80,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `https://${process.env.HOST || 'localhost'}:${PORT}`}/auth/google/callback`
+  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `https://${process.env.HOST || 'localhost'}:${parseInt(process.env.PORT || '8080', 10)}`}/auth/google/callback`
 },
 async (accessToken, refreshToken, profile, done) => {
   try {
@@ -531,7 +531,7 @@ app.get('/dashboard/data', requireAuth, (req, res) => {
 
 // Log required environment variables at startup
 console.log('=== Environment Variables Loaded ===');
-console.log('PORT:', PORT);
+console.log('PORT:', process.env.PORT || 8080);
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('BASE_URL:', BASE_URL);
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
@@ -542,9 +542,20 @@ console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
 console.log('===============================');
 
 app.get('/', (req, res) => {
-  res.send('Backend is running');
+  res.status(200).send("SwiftDeploy backend is live");
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+app.listen(process.env.PORT || 8080, () => {
+  console.log(`Server running on port ${process.env.PORT || 8080}`);
 });
