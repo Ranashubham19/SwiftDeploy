@@ -36,7 +36,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
 const SESSION_SECRET = process.env.SESSION_SECRET!;
 
-console.log("Google Client ID:", process.env.GOOGLE_CLIENT_ID);
+
 
 const app = express();
 
