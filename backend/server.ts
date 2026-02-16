@@ -45,8 +45,9 @@ const app = express();
  * Using values from provided environment
  */
 
+const PORT = parseInt(process.env.PORT || '8080', 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${parseInt(process.env.PORT || '8080', 10)}`;
+const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${PORT}`;
 
 // Middleware configuration
 app.use(cors({
@@ -80,7 +81,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `https://${process.env.HOST || 'localhost'}:${parseInt(process.env.PORT || '8080', 10)}`}/auth/google/callback`
+  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `https://${process.env.HOST || 'localhost'}:${PORT}`}/auth/google/callback`
 },
 async (accessToken, refreshToken, profile, done) => {
   try {
@@ -531,7 +532,7 @@ app.get('/dashboard/data', requireAuth, (req, res) => {
 
 // Log required environment variables at startup
 console.log('=== Environment Variables Loaded ===');
-console.log('PORT:', process.env.PORT || 8080);
+console.log('PORT:', parseInt(process.env.PORT || '8080', 10));
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('BASE_URL:', BASE_URL);
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
@@ -556,6 +557,6 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-app.listen(process.env.PORT || 8080, () => {
-  console.log(`Server running on port ${process.env.PORT || 8080}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${parseInt(process.env.PORT || '8080', 10)}`);
 });
