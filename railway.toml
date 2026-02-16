@@ -4,8 +4,15 @@
 builder = "NIXPACKS"
 
 [build.nixpacks]
-phases = {}
-artifacts = {}
+phases = {
+  "install": {
+    "cmds": ["npm install", "cd backend && npm install"]
+  },
+  "build": {
+    "cmds": ["cd backend && npm run build"]
+  }
+}
+artifacts = ["backend/dist"]
 
 [variables]
 TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @BotFather" }
