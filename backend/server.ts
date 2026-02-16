@@ -595,13 +595,21 @@ app.get("/up", (req, res) => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the process - just log the error
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
+  // Don't exit the process - just log the error
 });
 
+// Heartbeat to confirm the server stays alive
+setInterval(() => {
+  console.log("Heartbeat - server alive");
+}, 10000);
+
+// Start the server
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`✅ Health check available at http://localhost:${PORT}/health`);
