@@ -13,11 +13,28 @@ import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPend
 const botTokens = new Map<string, string>();
 
 // Validate required environment variables
-if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+const requiredEnvVars = [
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'TELEGRAM_BOT_TOKEN',
+  'API_KEY',
+  'SESSION_SECRET'
+] as const;
+
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
   console.error("❌ ERROR: Missing required environment variables");
-  console.error("Please ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in your .env file");
+  console.error(`Please ensure the following are set in your .env file: ${missingEnvVars.join(', ')}`);
   process.exit(1);
 }
+
+// Type-safe environment variable access
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
+const API_KEY = process.env.API_KEY!;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
+const SESSION_SECRET = process.env.SESSION_SECRET!;
 
 console.log("Google Client ID:", process.env.GOOGLE_CLIENT_ID);
 
@@ -93,7 +110,12 @@ passport.deserializeUser((user: any, done) => {
 });
 
 // Initialize Telegram Bot with default token
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+
+// Declare global function type
+declare global {
+  var setWebhookForBot: (botToken: string, botId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+}
 
 // Function to set webhook for a bot
 (global as any).setWebhookForBot = async (botToken: string, botId: string) => {
@@ -115,9 +137,9 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
       console.error(`[WEBHOOK] Failed to set webhook for bot ${botId}:`, data.description);
       return { success: false, error: data.description };
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error(`[WEBHOOK] Error setting webhook for bot ${botId}:`, error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message || 'Unknown error' };
   }
 };
 
@@ -272,7 +294,7 @@ app.get('/set-webhook', async (req, res) => {
  */
 app.get('/get-webhook-info', async (req, res) => {
   try {
-    const botToken = process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_TOKEN;
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN;
     const getInfoUrl = `https://api.telegram.org/bot${botToken}/getWebhookInfo`;
     
     console.log('[WEBHOOK_INFO] Getting webhook info');
@@ -287,11 +309,11 @@ app.get('/get-webhook-info', async (req, res) => {
       webhookInfo: data
     });
   } catch (error) {
-    console.error('[WEBHOOK_INFO] Error getting webhook info:', error);
+    console.error(`[WEBHOOK_INFO] Error getting webhook info:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to get webhook info',
-      details: error.message
+      details: (error as Error).message || 'Unknown error'
     });
   }
 });
@@ -313,7 +335,7 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
     botTokens.set(botId, botToken);
     
     // Set webhook for the bot
-    const webhookResult = await global.setWebhookForBot(botToken, botId);
+    const webhookResult = await (global as any).setWebhookForBot(botToken, botId);
     
     if (webhookResult.success) {
       console.log(`[DEPLOY] Successfully deployed bot ${botId}`);
@@ -339,7 +361,7 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Deployment failed', 
-      details: error.message 
+      details: (error as Error).message || 'Unknown error'
     });
   }
 });
