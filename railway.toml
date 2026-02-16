@@ -1,0 +1,21 @@
+# Railway configuration file
+
+[build]
+builder = "NIXPACKS"
+
+[build.nixpacks]
+phases = {}
+artifacts = {}
+
+[variables]
+TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @BotFather" }
+GOOGLE_CLIENT_ID = { required = true, description = "Google OAuth Client ID" }
+GOOGLE_CLIENT_SECRET = { required = true, description = "Google OAuth Client Secret" }
+SESSION_SECRET = { required = true, description = "Session secret for express-session" }
+API_KEY = { required = true, description = "Gemini API Key" }
+
+[deploy]
+numReplicas = 1
+region = "us-east1"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

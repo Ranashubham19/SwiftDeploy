@@ -1,0 +1,5 @@
+{
+  "name": "SwiftDeploy AI",
+  "description": "Enterprise-grade AI bot deployment platform for Telegram and Discord. Deploy production-ready bots in under 30 seconds with built-in analytics, memory, and usage tracking.",
+  "requestFramePermissions": []
+}
