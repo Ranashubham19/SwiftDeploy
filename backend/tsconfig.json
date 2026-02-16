@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "ESNext",
     "lib": ["ES2022"],
     "skipLibCheck": true,
     "types": ["node"],
@@ -15,7 +15,11 @@
     "isolatedModules": true,
     "outDir": "./dist",
     "rootDir": "./",
-    "noEmit": false
+    "noEmit": false,
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "declaration": false
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules"]

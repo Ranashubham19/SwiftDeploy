@@ -7,7 +7,7 @@ import { GoogleGenAI } from "@google/genai";
 import passport from 'passport';
 import session from 'express-session';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
-import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPendingVerifications } from './emailService';
+import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPendingVerifications } from './emailService.js';
 
 // In-memory storage for bot tokens (in production, use a proper database)
 const botTokens = new Map<string, string>();
