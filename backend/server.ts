@@ -44,7 +44,7 @@ const app = express();
  * PRODUCTION NODE CONFIGURATION
  * Using values from provided environment
  */
-const PORT = parseInt(process.env.PORT || '3001', 10);
+const PORT = parseInt(process.env.PORT || '8080', 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${PORT}`;
 
@@ -545,13 +545,6 @@ app.get('/', (req, res) => {
   res.send('Backend is running');
 });
 
-app.listen(PORT, () => {
-  console.log(`
-  --------------------------------------------------
-  ✅ SIMPLECLAW BACKEND ONLINE
-  🚀 NODE PORT: ${PORT}
-  📡 SIGNAL ENDPOINT: ${BASE_URL}/webhook
-  🧠 NEURAL ENGINE: Gemini 3 Pro
-  --------------------------------------------------
-  `);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
 });
