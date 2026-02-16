@@ -529,11 +529,23 @@ app.get('/dashboard/data', requireAuth, (req, res) => {
   });
 });
 
+// Log required environment variables at startup
+console.log('=== Environment Variables Loaded ===');
+console.log('PORT:', PORT);
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('BASE_URL:', BASE_URL);
+console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+console.log('TELEGRAM_BOT_TOKEN exists:', !!process.env.TELEGRAM_BOT_TOKEN);
+console.log('API_KEY exists:', !!process.env.API_KEY);
+console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
+console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
+console.log('===============================');
+
 app.get('/', (req, res) => {
-  res.send('SimpleClaw Production Node: ONLINE & OPERATIONAL');
+  res.send('Backend is running');
 });
 
-app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`
   --------------------------------------------------
   ✅ SIMPLECLAW BACKEND ONLINE
