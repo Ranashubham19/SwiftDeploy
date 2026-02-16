@@ -63,15 +63,20 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
   res.status(401).json({ message: 'Authentication required' });
 };
 
-app.use(session({
+// Configure session with a basic memory store for Railway compatibility
+const sessionConfig = {
   secret: process.env.SESSION_SECRET || 'super_secret_session_key_32_chars',
   resave: false,
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production', // Set to true in production with HTTPS
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
+  },
+  proxy: true
+};
+
+// In production, you'd want to use a proper session store like Redis or MongoDB
+app.use(session(sessionConfig));
 
 app.use(express.json() as any);
 app.use(passport.initialize());
