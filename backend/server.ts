@@ -8,7 +8,7 @@ import session from 'express-session';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPendingVerifications } from './emailService.js';
 
-// In-memory storage for bot tokens (in production, use a proper database)
+// In-memory storage for bot tokens
 const botTokens = new Map<string, string>();
 
 // Validate required environment variables
@@ -25,28 +25,25 @@ const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 if (missingEnvVars.length > 0) {
   console.error("❌ ERROR: Missing required environment variables");
   console.error(`Please ensure the following are set in your .env file: ${missingEnvVars.join(', ')}`);
-  // Don't exit here since Railway might not have all vars set initially
-  // Just log the error and continue
-  console.log("Continuing with available environment variables...");
+  process.exit(1);
 }
 
-// Type-safe environment variable access with fallbacks
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const API_KEY = process.env.API_KEY || '';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const SESSION_SECRET = process.env.SESSION_SECRET || '';
+// Type-safe environment variable access
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
+const API_KEY = process.env.API_KEY!;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
+const SESSION_SECRET = process.env.SESSION_SECRET!;
 
 const app = express();
 
 /**
- * PRODUCTION NODE CONFIGURATION
- * Using values from provided environment
+ * LOCALHOST DEVELOPMENT CONFIGURATION
  */
 
-const PORT = parseInt(process.env.PORT || "8080", 10);
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const BASE_URL = process.env.BASE_URL || `${process.env.HOST ? `https://${process.env.HOST}` : 'http://localhost:' + PORT}`;
+const PORT = parseInt(process.env.PORT || "3001", 10);
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const BASE_URL = `http://localhost:${PORT}`;
 
 // Middleware configuration
 app.use(cors({
@@ -62,19 +59,18 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
   res.status(401).json({ message: 'Authentication required' });
 };
 
-// Configure session with a basic memory store for Railway compatibility
+// Configure session
 const sessionConfig = {
   secret: process.env.SESSION_SECRET || 'super_secret_session_key_32_chars',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production', // Set to true in production with HTTPS
+    secure: false, // Set to false for localhost
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   },
   proxy: true
 };
 
-// In production, you'd want to use a proper session store like Redis or MongoDB
 app.use(session(sessionConfig));
 
 app.use(express.json() as any);
@@ -85,7 +81,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `${process.env.HOST ? `https://${process.env.HOST}` : 'http://localhost:' + PORT}`}/auth/google/callback`
+  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${BASE_URL}/auth/google/callback`
 },
 async (accessToken, refreshToken, profile, done) => {
   try {
@@ -114,19 +110,8 @@ passport.deserializeUser((user: any, done) => {
   done(null, user);
 });
 
-let bot: TelegramBot | null = null;
-
-// Initialize Telegram Bot only if token is available
-if (TELEGRAM_BOT_TOKEN) {
-  try {
-    bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
-  } catch (error) {
-    console.error("Failed to initialize Telegram bot:", error);
-    bot = null;
-  }
-} else {
-  console.warn("TELEGRAM_BOT_TOKEN not provided, Telegram bot will not be initialized");
-}
+// Initialize Telegram Bot with default token
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
 
 // Declare global function type
 declare global {
@@ -195,31 +180,27 @@ async function getAIResponse(userText: string): Promise<string> {
 /**
  * Telegram Event Signal Handlers
  */
-if (bot) {
-  bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const text = msg.text;
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
 
-    if (!text) return;
+  if (!text) return;
 
-    console.log(`[SIGNAL] Incoming message from ChatID: ${chatId}`);
+  console.log(`[SIGNAL] Incoming message from ChatID: ${chatId}`);
 
-    if (text === '/start') {
-      await bot!.sendMessage(chatId, "🚀 *SimpleClaw Node Established.*\n\nIntelligence Stream: Gemini 3 Pro (Active)\nLatency: 124ms\n\nReady for operations. Send a query to begin.", { parse_mode: 'Markdown' });
-      return;
-    }
+  if (text === '/start') {
+    await bot.sendMessage(chatId, "🚀 *SimpleClaw Node Established.*\n\nIntelligence Stream: Gemini 3 Pro (Active)\nLatency: 124ms\n\nReady for operations. Send a query to begin.", { parse_mode: 'Markdown' });
+    return;
+  }
 
-    try {
-      await bot!.sendChatAction(chatId, 'typing');
-      const aiReply = await getAIResponse(text);
-      await bot!.sendMessage(chatId, aiReply, { parse_mode: 'Markdown' });
-    } catch (err) {
-      console.error("[TELEGRAM_FAIL] Failed to route signal:", err);
-    }
-  });
-} else {
-  console.log("[TELEGRAM] Bot not initialized due to missing token");
-}
+  try {
+    await bot.sendChatAction(chatId, 'typing');
+    const aiReply = await getAIResponse(text);
+    await bot.sendMessage(chatId, aiReply, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error("[TELEGRAM_FAIL] Failed to route signal:", err);
+  }
+});
 
 // Function to handle messages for specific bots
 const handleBotMessage = async (botToken: string, msg: any) => {
@@ -251,10 +232,6 @@ const handleBotMessage = async (botToken: string, msg: any) => {
  */
 // Default webhook route (for backward compatibility)
 app.post('/webhook', (req, res) => {
-  if (!bot) {
-    console.log("[WEBHOOK] Bot not initialized, skipping update");
-    return res.status(500).json({ error: 'Bot not initialized' });
-  }
   console.log("[WEBHOOK] Received signal update from Telegram (default).");
   bot.processUpdate(req.body);
   res.sendStatus(200);
@@ -285,12 +262,9 @@ app.post('/webhook/:botId', (req, res) => {
 });
 
 /**
- * Production Gateway Provisioning
+ * Gateway Provisioning
  */
 app.get('/set-webhook', async (req, res) => {
-  if (!TELEGRAM_TOKEN) {
-    return res.status(500).json({ error: "TELEGRAM_BOT_TOKEN not configured" });
-  }
   const webhookUrl = `${BASE_URL}/webhook`;
   const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${webhookUrl}`;
   
@@ -319,11 +293,9 @@ app.get('/set-webhook', async (req, res) => {
  * Get Webhook Info
  */
 app.get('/get-webhook-info', async (req, res) => {
-  if (!TELEGRAM_TOKEN) {
-    return res.status(500).json({ error: "TELEGRAM_BOT_TOKEN not configured" });
-  }
   try {
-    const getInfoUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo`;
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN;
+    const getInfoUrl = `https://api.telegram.org/bot${botToken}/getWebhookInfo`;
     
     console.log('[WEBHOOK_INFO] Getting webhook info');
     
@@ -569,12 +541,12 @@ console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
 console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
 console.log('===============================');
 
-// Root health check route for Railway
+// Root health check route
 app.get("/", (req, res) => {
   res.status(200).send("SwiftDeploy backend is live");
 });
 
-// Health check endpoint specifically for Railway
+// Health check endpoint
 app.get("/health", (req, res) => {
   res.status(200).json({ 
     status: "ok", 
@@ -584,35 +556,19 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Health check endpoint for Railway (alternative path)
-app.get("/up", (req, res) => {
-  res.status(200).json({ 
-    status: "up", 
-    message: "Application is running"
-  });
-});
-
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit the process - just log the error
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  // Don't exit the process - just log the error
+  process.exit(1);
 });
 
-// Heartbeat to confirm the server stays alive
-setInterval(() => {
-  console.log("Heartbeat - server alive");
-}, 10000);
-
-// Start the server
 const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`✅ Health check available at http://localhost:${PORT}/health`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });
 
 // Graceful shutdown handling
