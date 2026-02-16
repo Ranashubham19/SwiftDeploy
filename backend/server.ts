@@ -1,4 +1,3 @@
-
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -37,7 +36,6 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
 const SESSION_SECRET = process.env.SESSION_SECRET!;
 
 
-
 const app = express();
 
 /**
@@ -47,7 +45,7 @@ const app = express();
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BASE_URL = process.env.BASE_URL || `http://${process.env.HOST || 'localhost'}:${PORT}`;
+const BASE_URL = process.env.BASE_URL || `${process.env.HOST ? `http://${process.env.HOST}` : 'http://localhost'}:${PORT}`;
 
 // Middleware configuration
 app.use(cors({
@@ -86,7 +84,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `https://${process.env.HOST || 'localhost'}:${PORT}`}/auth/google/callback`
+  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `${process.env.HOST ? `http://${process.env.HOST}` : 'http://localhost'}:${PORT}`}/auth/google/callback`
 },
 async (accessToken, refreshToken, profile, done) => {
   try {
@@ -292,7 +290,6 @@ app.get('/set-webhook', async (req, res) => {
     res.status(500).json({ error: "Provisioning gateway unreachable." });
   }
 });
-
 
 
 /**
@@ -547,7 +544,7 @@ console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
 console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
 console.log('===============================');
 
-app.get('/', (req, res) => {
+app.get("/", (req, res) => {
   res.status(200).send("SwiftDeploy backend is live");
 });
 
@@ -559,11 +556,10 @@ process.on('unhandledRejection', (reason, promise) => {
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  process.exit(1);
 });
 
 const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
 
 // Graceful shutdown handling
