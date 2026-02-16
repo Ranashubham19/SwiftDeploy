@@ -25,15 +25,17 @@ const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 if (missingEnvVars.length > 0) {
   console.error("❌ ERROR: Missing required environment variables");
   console.error(`Please ensure the following are set in your .env file: ${missingEnvVars.join(', ')}`);
-  process.exit(1);
+  // Don't exit here since Railway might not have all vars set initially
+  // Just log the error and continue
+  console.log("Continuing with available environment variables...");
 }
 
-// Type-safe environment variable access
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const API_KEY = process.env.API_KEY!;
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
-const SESSION_SECRET = process.env.SESSION_SECRET!;
+// Type-safe environment variable access with fallbacks
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const API_KEY = process.env.API_KEY || '';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 
 const app = express();
 
@@ -43,8 +45,8 @@ const app = express();
  */
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BASE_URL = process.env.BASE_URL || `${process.env.HOST ? `https://${process.env.HOST}` : 'http://localhost'}:${PORT}`;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const BASE_URL = process.env.BASE_URL || `${process.env.HOST ? `https://${process.env.HOST}` : 'http://localhost:' + PORT}`;
 
 // Middleware configuration
 app.use(cors({
@@ -83,7 +85,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `${process.env.HOST ? `https://${process.env.HOST}` : 'http://localhost'}:${PORT}`}/auth/google/callback`
+  callbackURL: process.env.GOOGLE_CALLBACK_URL || `${process.env.BASE_URL || `${process.env.HOST ? `https://${process.env.HOST}` : 'http://localhost:' + PORT}`}/auth/google/callback`
 },
 async (accessToken, refreshToken, profile, done) => {
   try {
@@ -112,8 +114,19 @@ passport.deserializeUser((user: any, done) => {
   done(null, user);
 });
 
-// Initialize Telegram Bot with default token
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+let bot: TelegramBot | null = null;
+
+// Initialize Telegram Bot only if token is available
+if (TELEGRAM_BOT_TOKEN) {
+  try {
+    bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+  } catch (error) {
+    console.error("Failed to initialize Telegram bot:", error);
+    bot = null;
+  }
+} else {
+  console.warn("TELEGRAM_BOT_TOKEN not provided, Telegram bot will not be initialized");
+}
 
 // Declare global function type
 declare global {
@@ -182,27 +195,31 @@ async function getAIResponse(userText: string): Promise<string> {
 /**
  * Telegram Event Signal Handlers
  */
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
+if (bot) {
+  bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
 
-  if (!text) return;
+    if (!text) return;
 
-  console.log(`[SIGNAL] Incoming message from ChatID: ${chatId}`);
+    console.log(`[SIGNAL] Incoming message from ChatID: ${chatId}`);
 
-  if (text === '/start') {
-    await bot.sendMessage(chatId, "🚀 *SimpleClaw Node Established.*\n\nIntelligence Stream: Gemini 3 Pro (Active)\nLatency: 124ms\n\nReady for operations. Send a query to begin.", { parse_mode: 'Markdown' });
-    return;
-  }
+    if (text === '/start') {
+      await bot!.sendMessage(chatId, "🚀 *SimpleClaw Node Established.*\n\nIntelligence Stream: Gemini 3 Pro (Active)\nLatency: 124ms\n\nReady for operations. Send a query to begin.", { parse_mode: 'Markdown' });
+      return;
+    }
 
-  try {
-    await bot.sendChatAction(chatId, 'typing');
-    const aiReply = await getAIResponse(text);
-    await bot.sendMessage(chatId, aiReply, { parse_mode: 'Markdown' });
-  } catch (err) {
-    console.error("[TELEGRAM_FAIL] Failed to route signal:", err);
-  }
-});
+    try {
+      await bot!.sendChatAction(chatId, 'typing');
+      const aiReply = await getAIResponse(text);
+      await bot!.sendMessage(chatId, aiReply, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error("[TELEGRAM_FAIL] Failed to route signal:", err);
+    }
+  });
+} else {
+  console.log("[TELEGRAM] Bot not initialized due to missing token");
+}
 
 // Function to handle messages for specific bots
 const handleBotMessage = async (botToken: string, msg: any) => {
@@ -234,6 +251,10 @@ const handleBotMessage = async (botToken: string, msg: any) => {
  */
 // Default webhook route (for backward compatibility)
 app.post('/webhook', (req, res) => {
+  if (!bot) {
+    console.log("[WEBHOOK] Bot not initialized, skipping update");
+    return res.status(500).json({ error: 'Bot not initialized' });
+  }
   console.log("[WEBHOOK] Received signal update from Telegram (default).");
   bot.processUpdate(req.body);
   res.sendStatus(200);
@@ -267,6 +288,9 @@ app.post('/webhook/:botId', (req, res) => {
  * Production Gateway Provisioning
  */
 app.get('/set-webhook', async (req, res) => {
+  if (!TELEGRAM_TOKEN) {
+    return res.status(500).json({ error: "TELEGRAM_BOT_TOKEN not configured" });
+  }
   const webhookUrl = `${BASE_URL}/webhook`;
   const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${webhookUrl}`;
   
@@ -295,9 +319,11 @@ app.get('/set-webhook', async (req, res) => {
  * Get Webhook Info
  */
 app.get('/get-webhook-info', async (req, res) => {
+  if (!TELEGRAM_TOKEN) {
+    return res.status(500).json({ error: "TELEGRAM_BOT_TOKEN not configured" });
+  }
   try {
-    const botToken = process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN;
-    const getInfoUrl = `https://api.telegram.org/bot${botToken}/getWebhookInfo`;
+    const getInfoUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo`;
     
     console.log('[WEBHOOK_INFO] Getting webhook info');
     
@@ -553,7 +579,16 @@ app.get("/health", (req, res) => {
   res.status(200).json({ 
     status: "ok", 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    message: "Application is running"
+  });
+});
+
+// Health check endpoint for Railway (alternative path)
+app.get("/up", (req, res) => {
+  res.status(200).json({ 
+    status: "up", 
+    message: "Application is running"
   });
 });
 
@@ -569,6 +604,7 @@ process.on('uncaughtException', (error) => {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ Health check available at http://localhost:${PORT}/health`);
 });
 
 // Graceful shutdown handling
