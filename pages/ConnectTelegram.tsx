@@ -11,14 +11,13 @@ type DeployStep = 'input' | 'verifying' | 'provisioning' | 'webhooking';
 const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ user, bots, setBots }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const isSuccessStage = new URLSearchParams(location.search).get('stage') === 'success';
 
   const [token, setToken] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployStep, setDeployStep] = useState<DeployStep>('input');
-  const [flowStep, setFlowStep] = useState<FlowStep>('token');
+  const [flowStep, setFlowStep] = useState<FlowStep>(isSuccessStage ? 'success' : 'token');
   const [deployError, setDeployError] = useState('');
-
-  const [deployedBotName, setDeployedBotName] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
 
   const [videoError, setVideoError] = useState(false);
@@ -112,7 +111,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       };
 
       setBots([newBot, ...bots]);
-      setDeployedBotName(botName);
       setShowConnectedToast(true);
       window.setTimeout(() => setShowConnectedToast(false), 4200);
       setFlowStep('send-first-message');
@@ -126,9 +124,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   };
 
   const confirmFirstMessage = async () => {
-    setFlowStep('pairing');
-    await new Promise((r) => setTimeout(r, 2200));
-    setFlowStep('success');
+    navigate('/connect/telegram/pairing');
   };
 
   const renderFlowCard = () => {

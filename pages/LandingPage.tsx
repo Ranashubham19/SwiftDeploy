@@ -40,7 +40,6 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
         <div className="hidden lg:flex items-center gap-10">
           <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="text-sm font-bold text-white uppercase tracking-widest">Home</button>
           <button onClick={() => scrollToSection('features')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Features</button>
-          <button onClick={() => scrollToSection('templates')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Templates</button>
           <button onClick={() => scrollToSection('contact')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Contact</button>
         </div>
 
@@ -223,125 +222,50 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
           </div>
         </div>
 
-        {/* Outcome-Focused Differentiators */}
-        <div className="w-full max-w-7xl px-6 mb-36">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-6xl font-black italic text-white tracking-tighter uppercase mb-4">Outcome Engine</h2>
-            <p className="text-zinc-500 font-bold italic text-lg">Designed to grow revenue, not just deploy bots.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-            {[
-              {
-                title: 'Monetization Rails',
-                desc: 'Paywalled replies, subscription unlocks, free-usage limits, and payment triggers for premium flows.',
-                metric: 'Revenue Controls: Native'
-              },
-              {
-                title: 'Template Studio',
-                desc: 'Industry-ready bot blueprints for coaching, real estate, ecommerce, education, and agencies.',
-                metric: 'Launch Time: < 10 min'
-              },
-              {
-                title: 'AI CRM Memory',
-                desc: 'Lead score, lifecycle tags, history context, and sync/export paths for follow-up pipelines.',
-                metric: 'Lead Context: Persistent'
-              },
-              {
-                title: 'Agency White-Label',
-                desc: 'Brandless client delivery mode for agencies to resell automation systems at scale.',
-                metric: 'B2B Resell Ready'
-              }
-            ].map((item) => (
-              <div key={item.title} className="config-card p-8 bg-[#0c0c0e]/45 border-white/5 hover:border-cyan-300/20 transition-all">
-                <div className="w-12 h-12 rounded-2xl bg-cyan-400/10 border border-cyan-300/20 flex items-center justify-center mb-5">
-                  <ICONS.Check className="w-5 h-5 text-cyan-300" />
-                </div>
-                <h3 className="text-2xl font-black text-white uppercase tracking-tight mb-3">{item.title}</h3>
-                <p className="text-zinc-400 text-sm font-bold leading-relaxed italic mb-5">{item.desc}</p>
-                <div className="inline-flex items-center px-3 py-1 rounded-full border border-cyan-300/25 bg-cyan-500/10 text-cyan-200 text-[10px] font-black uppercase tracking-widest">
-                  {item.metric}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Business Template Packs */}
-        <div className="w-full max-w-7xl px-6 mb-40">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-14">
-            <div>
-              <h2 className="text-4xl md:text-6xl font-black italic text-white tracking-tighter uppercase mb-4">Business Template Packs</h2>
-              <p className="text-zinc-500 font-bold italic text-lg">Pre-built flows to launch specific outcomes fast.</p>
-            </div>
-            <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">India-Ready Language Presets Included</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {[
-              ['Real Estate Lead Bot', 'Captures buyer intent, budgets, and location preferences with instant qualification.'],
-              ['Coaching Enrollment Bot', 'Handles discovery, eligibility, and payment-ready enrollment workflow.'],
-              ['Ecommerce Support Bot', 'Resolves orders, returns, FAQs, and upsell prompts automatically.'],
-              ['Agency Client Bot', 'Collects briefs, scopes requests, and automates delivery updates.'],
-              ['Education Doubt Bot', 'Provides structured doubt solving with topic-based memory context.'],
-              ['Creator Monetization Bot', 'Unlocks premium answers, subscriber-only help, and paid consultations.']
-            ].map(([title, desc]) => (
-              <div key={title} className="config-card p-7 bg-black/30 border-white/10 hover:border-white/25 transition-all">
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Ready Template</span>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">2-Min Setup</span>
-                </div>
-                <h3 className="text-xl font-black text-white tracking-tight uppercase mb-3">{title}</h3>
-                <p className="text-sm text-zinc-400 font-bold italic leading-relaxed">{desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
         {/* Features Section */}
         <div id="features" className="w-full max-w-7xl px-6 mb-40">
            <div className="text-center mb-20">
               <h2 className="text-4xl md:text-6xl font-black italic text-white tracking-tighter uppercase mb-4">Infrastructure Capabilities</h2>
-              <p className="text-zinc-500 font-bold italic text-lg">Next-gen operational stack for autonomous AI fleets.</p>
+              <p className="text-zinc-500 font-bold italic text-lg">One assistant, thousands of practical business workflows.</p>
            </div>
            
            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {[
                 {
-                  title: "Conversation Memory",
-                  desc: "Persistent context windows retain user history, intent, and state transitions across long-running threads.",
-                  metric: "Context Recall: 99.2%",
-                  icon: <ICONS.Check className="text-blue-500" />
+                  title: "Translate Messages in Real Time",
+                  desc: "Handle multilingual conversations instantly across customer and team channels with accurate context.",
+                  metric: "Live Translation: Active",
+                  icon: <svg className="w-6 h-6 text-cyan-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M3 5h12M9 3v2m-3 7h6m-5 9l4-10 4 10m2-14h4v4m0 0l-5 5" /></svg>
                 },
                 {
-                  title: "Reasoning Cluster",
-                  desc: "Production-grade model routing with deterministic fallback policies and latency-aware inference paths.",
-                  metric: "Median Reasoning: 1.8s",
-                  icon: <ICONS.Gemini className="w-8 h-8" />
+                  title: "Organize Your Inbox",
+                  desc: "Automatically classify, prioritize, and draft replies so important conversations are never missed.",
+                  metric: "Inbox Automation: On",
+                  icon: <svg className="w-6 h-6 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4h16v11H4zM4 15l3 5h10l3-5" /></svg>
                 },
                 {
-                  title: "Edge Signal Routing",
-                  desc: "Geo-aware webhook routing keeps regional latency low and delivery consistency high during peak traffic.",
-                  metric: "P95 Handshake: 142ms",
-                  icon: <svg className="w-6 h-6 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  title: "Answer Support Tickets",
+                  desc: "Resolve repetitive support requests with consistent, policy-aware responses and escalation triggers.",
+                  metric: "Ticket Resolution: Faster",
+                  icon: <svg className="w-6 h-6 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 12l2 2 4-4M4 6h16v12H4z" /></svg>
                 },
                 {
-                  title: "Multimodal Intake",
-                  desc: "Images, documents, and audio are normalized into one processing stream for consistent downstream automation.",
-                  metric: "Supported Inputs: 12+",
-                  icon: <ICONS.Claude className="w-6 h-6" />
+                  title: "Track Expenses and Receipts",
+                  desc: "Capture expense entries, tag categories, and maintain searchable records for cleaner operations.",
+                  metric: "Ops Tracking: Structured",
+                  icon: <svg className="w-6 h-6 text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M7 3h10v18l-5-3-5 3V3z" /></svg>
                 },
                 {
-                  title: "Live Observability",
-                  desc: "Per-bot telemetry, response quality traces, and operational events stay visible in live operations.",
-                  metric: "Live Refresh: 5s",
-                  icon: <ICONS.Check className="w-6 h-6 text-cyan-300" />
+                  title: "Find Best Prices Online",
+                  desc: "Compare options quickly, surface better deals, and reduce manual effort across purchase workflows.",
+                  metric: "Price Intelligence: Enabled",
+                  icon: <svg className="w-6 h-6 text-violet-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 8c-1.657 0-3 1.343-3 3s1.343 3 3 3m0-6c1.657 0 3 1.343 3 3m-3-3V6m0 8v2m-7-5h14" /></svg>
                 },
                 {
-                  title: "Verified Provisioning",
-                  desc: "Credential checks, command sync, and channel verification happen before deployment goes active.",
-                  metric: "Deploy Validation: Strict",
-                  icon: <ICONS.Telegram className="w-6 h-6" />
+                  title: "Draft Social Posts",
+                  desc: "Generate polished platform-ready post drafts, hooks, and caption variants in seconds.",
+                  metric: "Content Drafting: Instant",
+                  icon: <svg className="w-6 h-6 text-pink-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M8 10h8M8 14h5M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
                 }
               ].map((feat, i) => (
                 <div key={i} className="config-card p-10 bg-[#0c0c0e]/45 border-white/5 hover:border-cyan-300/25 transition-all group">

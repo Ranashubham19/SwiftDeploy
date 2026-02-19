@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Billing from './pages/Billing';
 import ConnectTelegram from './pages/ConnectTelegram';
 import ConnectDiscord from './pages/ConnectDiscord';
+import TelegramPairing from './pages/TelegramPairing';
 import Contact from './pages/Contact';
 import TermsOfService from './pages/TermsOfService';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -86,6 +87,7 @@ const App: React.FC = () => {
           <Route path="/" element={<LandingPage user={user} />} />
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/connect/telegram" element={user ? <ConnectTelegram user={user} bots={bots} setBots={setBots} /> : <Navigate to="/login" />} />
+          <Route path="/connect/telegram/pairing" element={user ? <TelegramPairing /> : <Navigate to="/login" />} />
           <Route path="/connect/discord" element={user ? <ConnectDiscord user={user} bots={bots} setBots={setBots} /> : <Navigate to="/login" />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/terms" element={<TermsOfService />} />
