@@ -12,6 +12,7 @@ import Contact from './pages/Contact';
 import TermsOfService from './pages/TermsOfService';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import { User, Bot, Platform, AIModel, BotStatus } from './types';
+import { apiUrl } from './utils/api';
 
 const INITIAL_BOTS: Bot[] = [
   {
@@ -34,14 +35,35 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // With session-based auth, we don't restore from localStorage
-    // Authentication state is managed by the backend session
-    // Add small delay to ensure proper rendering
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 100);
-    
-    return () => clearTimeout(timer);
+    const restoreSession = async () => {
+      try {
+        const response = await fetch(apiUrl('/me'), {
+          credentials: 'include'
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data?.user?.email) {
+            const restoredUser: User = {
+              id: data.user.id,
+              email: data.user.email,
+              name: data.user.name,
+              plan: data.user.plan || 'FREE',
+              isSubscribed: Boolean(data.user.isSubscribed)
+            };
+            setUser(restoredUser);
+            if (restoredUser.name.includes('Shubham') || restoredUser.name.includes('Shubam')) {
+              setBots(INITIAL_BOTS);
+            }
+          }
+        }
+      } catch {
+        // Ignore unauthenticated state.
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    restoreSession();
   }, []);
 
   const handleLogin = (userData: User) => {

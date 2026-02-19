@@ -274,9 +274,13 @@ const API_KEY = process.env.API_KEY || 'placeholder_api_key';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'placeholder_client_id';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'placeholder_client_secret';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'very_long_random_session_secret_for_dev_testing_only';
+const isProduction = process.env.NODE_ENV === 'production';
 
 const app = express();
 const startedAtIso = new Date().toISOString();
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
 
 // Lightweight health endpoints first: avoid session/auth middleware interference.
 app.get('/health', (_req, res) => {
@@ -299,7 +303,6 @@ app.get('/', (_req, res) => {
 
 const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const isProduction = process.env.NODE_ENV === 'production';
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const AI_RESPONSE_TIMEOUT_MS = 25000;
@@ -352,8 +355,8 @@ const sessionConfig = {
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: 'lax' as const,
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isProduction ? ('none' as const) : ('lax' as const),
+    secure: isProduction,
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   },
   proxy: true
