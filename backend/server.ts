@@ -90,6 +90,17 @@ const discordGatewayClients = new Map<string, DiscordClient>();
 const managedBots = new Map<string, TelegramBot>();
 const managedBotListeners = new Set<string>();
 const telegramBotOwners = new Map<string, string>();
+type TelegramBotConfig = {
+  botId: string;
+  botToken: string;
+  ownerEmail: string;
+  createdAt: string;
+};
+type PersistedBotState = {
+  version: 1;
+  telegramBots: TelegramBotConfig[];
+  discordBots: DiscordBotConfig[];
+};
 type BotPlatform = 'TELEGRAM' | 'DISCORD';
 type BotTelemetry = {
   botId: string;
@@ -252,6 +263,49 @@ const getBotIdByTelegramToken = (botToken: string): string | null => {
   return null;
 };
 
+const persistBotState = (): void => {
+  const telegramBots: TelegramBotConfig[] = Array.from(botTokens.entries()).map(([botId, botToken]) => ({
+    botId,
+    botToken,
+    ownerEmail: telegramBotOwners.get(botId) || '',
+    createdAt: new Date().toISOString()
+  }));
+  const state: PersistedBotState = {
+    version: 1,
+    telegramBots,
+    discordBots: Array.from(discordBots.values())
+  };
+
+  try {
+    const dir = path.dirname(BOT_STATE_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(BOT_STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch (error) {
+    console.warn('[BOT_STATE] Failed to persist deployed bot state:', (error as Error).message);
+  }
+};
+
+const loadPersistedBotState = (): PersistedBotState => {
+  try {
+    if (!fs.existsSync(BOT_STATE_FILE)) {
+      return { version: 1, telegramBots: [], discordBots: [] };
+    }
+
+    const raw = fs.readFileSync(BOT_STATE_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as PersistedBotState;
+    return {
+      version: 1,
+      telegramBots: Array.isArray(parsed.telegramBots) ? parsed.telegramBots : [],
+      discordBots: Array.isArray(parsed.discordBots) ? parsed.discordBots : []
+    };
+  } catch (error) {
+    console.warn('[BOT_STATE] Failed to load persisted state:', (error as Error).message);
+    return { version: 1, telegramBots: [], discordBots: [] };
+  }
+};
+
 // Validate required environment variables
 const requiredEnvVars = [
   'GOOGLE_CLIENT_ID',
@@ -275,6 +329,10 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'placeholder_client_id'
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'placeholder_client_secret';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'very_long_random_session_secret_for_dev_testing_only';
 const isProduction = process.env.NODE_ENV === 'production';
+const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
+  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-bots.json')
+    : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-bots.json'));
 
 const app = express();
 const startedAtIso = new Date().toISOString();
@@ -629,6 +687,60 @@ const connectDiscordGatewayClient = async (botId: string, botToken: string): Pro
   return client;
 };
 
+const restorePersistedBots = async (): Promise<void> => {
+  const state = loadPersistedBotState();
+  if (!state.telegramBots.length && !state.discordBots.length) {
+    return;
+  }
+
+  for (const tg of state.telegramBots) {
+    const botId = String(tg.botId || '').trim();
+    const botToken = String(tg.botToken || '').trim();
+    if (!botId || !botToken) continue;
+
+    botTokens.set(botId, botToken);
+    if (tg.ownerEmail) {
+      telegramBotOwners.set(botId, tg.ownerEmail.trim().toLowerCase());
+      ensureBotTelemetry(botId, 'TELEGRAM', tg.ownerEmail.trim().toLowerCase());
+    }
+
+    if (!isProduction) {
+      let localBot = managedBots.get(botToken);
+      if (!localBot) {
+        localBot = new TelegramBot(botToken, { polling: true });
+        managedBots.set(botToken, localBot);
+      }
+      if (!managedBotListeners.has(botToken)) {
+        localBot.on('message', async (msg) => {
+          await handleBotMessage(botToken, msg);
+        });
+        managedBotListeners.add(botToken);
+      }
+    } else {
+      try {
+        await (global as any).setWebhookForBot(botToken, botId);
+      } catch (error) {
+        console.warn(`[BOT_STATE] Telegram webhook restore failed for ${botId}:`, (error as Error).message);
+      }
+    }
+  }
+
+  for (const dc of state.discordBots) {
+    const botId = String(dc.botId || '').trim();
+    const botToken = String(dc.botToken || '').trim();
+    if (!botId || !botToken) continue;
+    discordBots.set(botId, dc);
+    ensureBotTelemetry(botId, 'DISCORD', (dc.createdBy || '').trim().toLowerCase());
+    try {
+      await connectDiscordGatewayClient(botId, botToken);
+    } catch (error) {
+      console.warn(`[BOT_STATE] Discord gateway restore failed for ${botId}:`, (error as Error).message);
+    }
+  }
+
+  console.log(`[BOT_STATE] Restored ${state.telegramBots.length} Telegram and ${state.discordBots.length} Discord deployments`);
+};
+
 const sendDiscordFollowUp = async (
   applicationId: string,
   interactionToken: string,
@@ -960,6 +1072,7 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
           freeDeployCount: subscription.freeDeployCount + 1
         });
       }
+      persistBotState();
       console.log(`[DEPLOY] Successfully deployed bot ${botId}`);
       res.json({
         success: true,
@@ -971,6 +1084,8 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
     } else {
       // Remove the bot token if webhook setup failed
       botTokens.delete(botId);
+      telegramBotOwners.delete(botId);
+      persistBotState();
       console.error(`[DEPLOY] Failed to deploy bot ${botId}:`, webhookResult.error);
       res.status(500).json({ 
         success: false, 
@@ -1088,6 +1203,7 @@ app.post('/deploy-discord-bot', requireAuth, async (req, res) => {
       createdBy: userEmail,
       createdAt: new Date().toISOString()
     });
+    persistBotState();
 
     if (subscription.plan === 'FREE') {
       userSubscriptionState.set(userEmail, {
@@ -2191,6 +2307,7 @@ setTimeout(() => {
   console.log('NODE_ENV:', process.env.NODE_ENV);
   console.log('BASE_URL:', BASE_URL);
   console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+  console.log('BOT_STATE_FILE:', BOT_STATE_FILE);
   console.log('TELEGRAM_BOT_TOKEN exists:', !!process.env.TELEGRAM_BOT_TOKEN);
   console.log('API_KEY exists:', !!process.env.API_KEY);
   console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
@@ -2216,6 +2333,9 @@ process.on('uncaughtException', (error) => {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  restorePersistedBots().catch((error) => {
+    console.warn('[BOT_STATE] Restore routine failed:', (error as Error).message);
+  });
 });
 
 // Graceful shutdown handling
