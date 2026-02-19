@@ -22,7 +22,7 @@ SESSION_SECRET = { required = true, description = "Session secret for express-se
 API_KEY = { required = true, description = "Gemini API Key" }
 
 [deploy]
-startCommand = "cd backend && npm start"
+startCommand = "node --import ./backend/env-preload.mjs backend/dist/server.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 numReplicas = 1
