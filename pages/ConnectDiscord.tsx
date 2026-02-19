@@ -144,7 +144,16 @@ const ConnectDiscord: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ us
         <BrandLogo />
       </div>
 
-      <div className="w-full max-w-[1120px] bg-[#091428] border border-white/10 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] overflow-hidden relative animate-in fade-in zoom-in-95 duration-700">
+      <div className="text-center mb-8 max-w-4xl px-6">
+        <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase">
+          Deploy OpenClaw in Under 30 Seconds
+        </h1>
+        <p className="text-zinc-400 text-base md:text-lg mt-3">
+          Eliminate technical setup and instantly launch your own always-on OpenClaw AI instance with a single secure deployment flow.
+        </p>
+      </div>
+
+      <div className="w-full max-w-[1120px] bg-[#050a16] border border-white/10 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] overflow-hidden relative animate-in fade-in zoom-in-95 duration-700">
         {isDeploying && (
           <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-300">
             <div className="w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mb-8"></div>

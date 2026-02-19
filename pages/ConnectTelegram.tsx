@@ -19,8 +19,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [deployError, setDeployError] = useState('');
 
   const [deployedBotName, setDeployedBotName] = useState('');
-  const [deployedBotId, setDeployedBotId] = useState('');
-  const [webhookUrl, setWebhookUrl] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
 
   const [videoError, setVideoError] = useState(false);
@@ -115,8 +113,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
       setBots([newBot, ...bots]);
       setDeployedBotName(botName);
-      setDeployedBotId(botId);
-      setWebhookUrl(result.webhookUrl || '');
       setShowConnectedToast(true);
       window.setTimeout(() => setShowConnectedToast(false), 4200);
       setFlowStep('send-first-message');
@@ -169,16 +165,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
     if (flowStep === 'success') {
       return (
-        <div className="space-y-6">
-          <div className="text-center">
-            <h2 className="text-4xl md:text-5xl font-black text-white tracking-tight">Deploy Telegram AI Infrastructure in Under 60 Seconds</h2>
-            <p className="text-zinc-400 mt-3 text-base md:text-lg">
-              Production-grade provisioning, webhook linking, and live bot activation with zero manual server setup.
-            </p>
-            <p className="text-zinc-500 mt-1 text-sm font-semibold">Your Telegram deployment is now active and operational.</p>
-          </div>
-
-          <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-10 md:px-10 text-center space-y-6">
+        <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-12 md:px-10 text-center space-y-6">
           <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto">
             <ICONS.Check className="w-8 h-8 text-emerald-400" />
           </div>
@@ -240,7 +227,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           <p className="text-xs text-zinc-500 pt-1">
             For advanced scaling, dedicated performance tuning, or enterprise onboarding, contact support.
           </p>
-          </div>
         </div>
       );
     }
@@ -323,6 +309,15 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         </button>
       </div>
 
+      <div className="text-center mb-8 max-w-4xl px-6">
+        <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase">
+          Deploy OpenClaw in Under 30 Seconds
+        </h1>
+        <p className="text-zinc-400 text-base md:text-lg mt-3">
+          Eliminate technical setup and instantly launch your own always-on OpenClaw AI instance with a single secure deployment flow.
+        </p>
+      </div>
+
       <div className="w-full max-w-[940px] bg-[#050a16] border border-white/10 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] flex flex-col md:row overflow-hidden animate-in fade-in zoom-in-95 duration-700 relative">
         {isDeploying ? (
           <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-300 px-8 text-center">
@@ -339,7 +334,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         ) : null}
 
         <div className="flex flex-col md:flex-row w-full">
-          <div className="flex-1 p-12 md:p-20 border-b md:border-b-0 md:border-r border-white/5">
+          <div className={`flex-1 p-12 md:p-20 border-b md:border-b-0 ${flowStep === 'success' ? '' : 'md:border-r border-white/5'}`}>
             <div className="flex items-center gap-3 mb-12">
               <ICONS.Telegram className="w-9 h-9 shrink-0" />
               <h1 className="text-2xl font-black text-white tracking-tight uppercase italic">Connect Telegram</h1>
@@ -347,7 +342,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             {renderFlowCard()}
           </div>
 
-          <div className="hidden md:flex w-[400px] bg-[#09090b] relative items-center justify-center p-10 overflow-hidden">
+          <div className={`hidden md:flex w-[400px] bg-[#09090b] relative items-center justify-center p-10 overflow-hidden ${flowStep === 'success' ? 'hidden' : ''}`}>
             <div className="absolute w-[300px] h-[300px] bg-blue-600/10 rounded-full blur-[100px]"></div>
             <div className="w-full h-[640px] bg-black rounded-[54px] border-[12px] border-[#1a1a1c] shadow-[0_40px_80px_rgba(0,0,0,0.8)] relative overflow-hidden">
               {!videoError ? (

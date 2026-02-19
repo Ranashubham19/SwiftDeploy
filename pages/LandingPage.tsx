@@ -105,14 +105,14 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
         <div className="text-center mb-16 max-w-5xl">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-400/10 border border-cyan-300/20 text-cyan-300 text-xs font-black uppercase tracking-[0.2em] mb-8">
             <span className="w-2 h-2 bg-cyan-300 rounded-full animate-pulse"></span>
-            AI Business Assistant Infrastructure
+            One-Click AI Provisioning
           </div>
           <h1 className="text-5xl md:text-8xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase">
-            Build <span className="text-cyan-300">Revenue-Ready</span> AI Assistants <br /> 
-            for <span className="text-zinc-400">Real Business Outcomes</span>
+            Deploy <span className="text-cyan-300">OpenClaw</span> <br />
+            in <span className="text-zinc-400">Under 30 Seconds</span>
           </h1>
           <p className="text-lg md:text-xl text-zinc-400 font-medium max-w-3xl mx-auto leading-relaxed italic">
-            Launch lead capture, conversion, and support assistants across Telegram and Discord with monetization, analytics, and CRM memory built in.
+            Eliminate technical setup and instantly launch your own always-on OpenClaw AI instance with a single secure deployment flow.
           </p>
         </div>
 
