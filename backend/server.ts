@@ -276,6 +276,22 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'placeholder_cl
 const SESSION_SECRET = process.env.SESSION_SECRET || 'very_long_random_session_secret_for_dev_testing_only';
 
 const app = express();
+const startedAtIso = new Date().toISOString();
+
+// Lightweight health endpoints first: avoid session/auth middleware interference.
+app.get('/health', (_req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    startedAt: startedAtIso,
+    uptime: process.uptime(),
+    message: 'Application is running'
+  });
+});
+
+app.get('/', (_req, res) => {
+  res.status(200).send('SwiftDeploy backend is live');
+});
 
 /**
  * LOCALHOST DEVELOPMENT CONFIGURATION
@@ -2182,21 +2198,6 @@ setTimeout(() => {
   console.log('===============================');
 }, 100); // Small delay to ensure environment variables are loaded
 
-// Root health check route
-app.get("/", (req, res) => {
-  res.status(200).send("SwiftDeploy backend is live");
-});
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.status(200).json({ 
-    status: "ok", 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    message: "Application is running"
-  });
-});
-
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -2205,7 +2206,9 @@ process.on('unhandledRejection', (reason, promise) => {
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  process.exit(1);
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(1);
+  }
 });
 
 const server = app.listen(PORT, "0.0.0.0", () => {
