@@ -21,6 +21,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [deployedBotName, setDeployedBotName] = useState('');
   const [deployedBotId, setDeployedBotId] = useState('');
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [showConnectedToast, setShowConnectedToast] = useState(false);
 
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -116,6 +117,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       setDeployedBotName(botName);
       setDeployedBotId(botId);
       setWebhookUrl(result.webhookUrl || '');
+      setShowConnectedToast(true);
+      window.setTimeout(() => setShowConnectedToast(false), 4200);
       setFlowStep('send-first-message');
       setIsDeploying(false);
       setDeployStep('input');
@@ -357,6 +360,20 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       <div className="mt-12 animate-pulse">
         <p className="text-[11px] font-black uppercase tracking-[0.5em] text-zinc-700">Cluster Provisioning Phase 2: Active</p>
       </div>
+
+      {showConnectedToast ? (
+        <div className="fixed right-6 bottom-6 z-[120] max-w-[380px] bg-emerald-500/15 border border-emerald-400/40 backdrop-blur-xl rounded-2xl px-5 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.45)] animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex items-start gap-3">
+            <div className="w-6 h-6 rounded-full bg-emerald-500/25 border border-emerald-400/50 flex items-center justify-center mt-0.5">
+              <ICONS.Check className="w-4 h-4 text-emerald-300" />
+            </div>
+            <div>
+              <p className="text-emerald-200 font-black text-sm tracking-wide">Telegram connected</p>
+              <p className="text-emerald-100/85 text-xs mt-1">Your bot is now linked. You are ready to send and receive messages.</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };
