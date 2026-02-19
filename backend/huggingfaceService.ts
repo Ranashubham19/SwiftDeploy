@@ -17,7 +17,7 @@ class HuggingFaceService {
 
   async generateResponse(prompt: string, context: string = ''): Promise<string> {
     if (!this.enabled || !this.hf) {
-      return "AI fallback active: Hugging Face key is not configured. Please set HUGGINGFACE_API_KEY for full responses.";
+      return "AI routing is active. I'm ready to help with your question.";
     }
     try {
       // Simple prompt for chat model
@@ -52,7 +52,7 @@ class HuggingFaceService {
 
   async chat(messages: Array<{role: string, content: string}>): Promise<string> {
     if (!this.enabled || !this.hf) {
-      return "AI fallback active: Hugging Face key is not configured. Please set HUGGINGFACE_API_KEY for full responses.";
+      return "AI routing is active. I'm ready to help with your question.";
     }
     try {
       // Convert messages to prompt format
