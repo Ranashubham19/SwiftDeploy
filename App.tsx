@@ -2,10 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
-import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Billing from './pages/Billing';
-import AdminPanel from './pages/AdminPanel';
 import ConnectTelegram from './pages/ConnectTelegram';
 import ConnectDiscord from './pages/ConnectDiscord';
 import Contact from './pages/Contact';
@@ -73,11 +71,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    setBots([]);
-  };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#050a16]">
@@ -92,14 +85,12 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/" element={<LandingPage user={user} />} />
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
-          <Route path="/dashboard" element={user ? <Dashboard user={user} bots={bots} setBots={setBots} onLogout={handleLogout} /> : <Navigate to="/login" />} />
           <Route path="/connect/telegram" element={user ? <ConnectTelegram user={user} bots={bots} setBots={setBots} /> : <Navigate to="/login" />} />
           <Route path="/connect/discord" element={user ? <ConnectDiscord user={user} bots={bots} setBots={setBots} /> : <Navigate to="/login" />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/billing" element={user ? <Billing user={user} /> : <Navigate to="/login" />} />
-          <Route path="/admin" element={user?.email === 'admin@simpleclaw.com' ? <AdminPanel /> : <Navigate to="/" />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>

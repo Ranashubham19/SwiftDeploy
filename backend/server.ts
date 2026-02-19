@@ -1781,15 +1781,6 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Example protected route - requires authentication
-app.get('/dashboard/data', requireAuth, (req, res) => {
-  res.json({ 
-    message: 'Protected dashboard data', 
-    user: req.user,
-    timestamp: new Date().toISOString()
-  });
-});
-
 app.get('/ops/status', requireAuth, (req, res) => {
   const provider = (process.env.AI_PROVIDER || 'openrouter').trim().toLowerCase();
   const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
