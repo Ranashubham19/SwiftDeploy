@@ -89,18 +89,20 @@ const getProviderOrder = (preferredProvider: string, prompt: string): string[] =
   const reasoningHeavy = isReasoningHeavyQuery(prompt);
 
   if (temporal || reasoningHeavy) {
+    if (preferredProvider === 'moonshot') return ['moonshot', 'openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
     if (preferredProvider === 'openai') return ['openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
     if (preferredProvider === 'anthropic') return ['anthropic', 'openai', 'openrouter', 'sarvam', 'gemini'];
     if (preferredProvider === 'gemini') return ['gemini', 'openai', 'anthropic', 'openrouter', 'sarvam'];
     if (preferredProvider === 'sarvam') return ['openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
-    return ['openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
+    return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
   }
 
+  if (preferredProvider === 'moonshot') return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
   if (preferredProvider === 'sarvam') return ['sarvam', 'openrouter', 'openai', 'anthropic', 'gemini'];
   if (preferredProvider === 'anthropic') return ['anthropic', 'openrouter', 'openai', 'sarvam', 'gemini'];
   if (preferredProvider === 'gemini') return ['gemini', 'openrouter', 'openai', 'anthropic', 'sarvam'];
   if (preferredProvider === 'openai') return ['openai', 'openrouter', 'anthropic', 'sarvam', 'gemini'];
-  return ['openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
+  return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
 };
 
 const callOpenAI = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
@@ -140,6 +142,48 @@ const callOpenAI = async (prompt: string, history: ChatHistory, systemInstructio
   const text = data?.choices?.[0]?.message?.content;
   if (!text || typeof text !== 'string') {
     throw new Error('OPENAI_EMPTY_RESPONSE');
+  }
+  return text.trim();
+};
+
+const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
+  const apiKey = (process.env.MOONSHOT_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error('MOONSHOT_KEY_MISSING');
+  }
+
+  const model = (process.env.MOONSHOT_MODEL || 'kimi-k2-0905-preview').trim();
+  const historyText = extractHistoryText(history);
+  const baseUrl = (process.env.MOONSHOT_BASE_URL || 'https://api.moonshot.ai/v1/chat/completions').trim();
+  const body = {
+    model,
+    messages: [
+      ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+      ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.2,
+    max_tokens: 600
+  };
+
+  const response = await fetch(baseUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  const data: any = await response.json();
+  if (!response.ok) {
+    const message = data?.error?.message || data?.message || 'Moonshot request failed';
+    throw new Error(`MOONSHOT_ERROR: ${message}`);
+  }
+
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text || typeof text !== 'string') {
+    throw new Error('MOONSHOT_EMPTY_RESPONSE');
   }
   return text.trim();
 };
@@ -303,12 +347,13 @@ export const generateBotResponse = async (
     const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
 
     const hasSarvam = getSarvamKeys().length > 0;
+    const hasMoonshot = Boolean((process.env.MOONSHOT_API_KEY || '').trim());
     const hasOpenAI = Boolean((process.env.OPENAI_API_KEY || '').trim());
     const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
     const explicitProvider = (process.env.AI_PROVIDER || '').trim().toLowerCase();
     const preferredProvider =
       explicitProvider
-      || (hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
+      || (hasMoonshot ? 'moonshot' : hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
     const providers = getProviderOrder(preferredProvider, sanitizedPrompt);
 
     let lastError: Error | null = null;
@@ -319,6 +364,9 @@ export const generateBotResponse = async (
         }
         if (provider === 'openrouter') {
           return await callOpenRouter(sanitizedPrompt, compactHistory, adaptiveInstruction);
+        }
+        if (provider === 'moonshot') {
+          return await callMoonshot(sanitizedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'openai') {
           return await callOpenAI(sanitizedPrompt, compactHistory, adaptiveInstruction);
@@ -359,7 +407,7 @@ export const generateBotResponse = async (
     
     // Enhanced error handling with specific error types
     if (error instanceof Error) {
-      if (error.message.includes('GEMINI_KEY') || error.message.includes('OPENROUTER')) {
+      if (error.message.includes('GEMINI_KEY') || error.message.includes('OPENROUTER') || error.message.includes('MOONSHOT')) {
         throw new Error("INVALID_PROVIDER_KEY: Please check your AI provider API configuration");
       } else if (error.message.includes('quota') || error.message.includes('rate')) {
         throw new Error("RATE_LIMIT_EXCEEDED: Please try again in a few moments");
