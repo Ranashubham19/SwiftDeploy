@@ -54,12 +54,6 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             </>
           ) : (
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => navigate('/connect/telegram', { state: { model: selectedModel } })}
-                className="btn-deploy-gradient text-sm font-black px-8 py-3 rounded-xl transition-all uppercase"
-              >
-                Launch Bot
-              </button>
               <div className="relative group">
                 <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/10 shadow-lg bg-zinc-900 cursor-pointer">
                   <img 
