@@ -19,7 +19,11 @@ TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @
 GOOGLE_CLIENT_ID = { required = true, description = "Google OAuth Client ID" }
 GOOGLE_CLIENT_SECRET = { required = true, description = "Google OAuth Client Secret" }
 SESSION_SECRET = { required = true, description = "Session secret for express-session" }
-API_KEY = { required = true, description = "Gemini API Key" }
+AI_PROVIDER = { required = false, description = "Primary AI provider (sarvam/openrouter/openai/anthropic/gemini)" }
+SARVAM_API_KEYS = { required = false, description = "Comma-separated Sarvam API keys for primary routing" }
+SARVAM_MODEL = { required = false, description = "Sarvam model identifier (default: sarvam-m)" }
+SARVAM_BASE_URL = { required = false, description = "Sarvam chat completions endpoint URL" }
+API_KEY = { required = false, description = "Gemini API key (optional fallback)" }
 
 [deploy]
 startCommand = "node --import ./backend/env-preload.mjs backend/dist/server.js"
