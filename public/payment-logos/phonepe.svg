@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="48" viewBox="0 0 120 48" fill="none">
+  <rect x="1" y="1" width="118" height="46" rx="10" fill="#0B1220" stroke="#334155"/>
+  <circle cx="24" cy="24" r="11" fill="#5F259F"/>
+  <circle cx="34" cy="24" r="11" fill="#7C3AED" fill-opacity="0.85"/>
+  <text x="52" y="30" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="15" font-weight="700">PhonePe</text>
+</svg>

@@ -2,6 +2,17 @@
 import React from 'react';
 
 export const ICONS = {
+  LogoMark: (props: any) => (
+    <svg viewBox="0 0 24 24" fill="none" {...props}>
+      <defs>
+        <linearGradient id="swiftdeploy-logo" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#66D9FF" />
+          <stop offset="1" stopColor="#19B8A8" />
+        </linearGradient>
+      </defs>
+      <path d="M13.2 2.5L5.2 13.1h5.4l-1.3 8.4 9.5-12h-5.2l-.4-7z" fill="url(#swiftdeploy-logo)" />
+    </svg>
+  ),
   Claude: (props: any) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="#d97757" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
       <circle cx="12" cy="12" r="4" />
@@ -9,9 +20,11 @@ export const ICONS = {
     </svg>
   ),
   GPT: (props: any) => (
-    <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
-      <path d="M22.28 7.53c-.52-1.99-1.94-3.61-3.8-4.42-1.87-.82-4.04-.76-5.85.16l-.1.05c-1.81.93-3.23 2.54-3.75 4.54l-.01.05c-.52 1.99-.2 4.09.89 5.8l-.05.1c-1.09 1.71-1.41 3.81-.89 5.8l.01.05c.52 1.99 1.94 3.61 3.8 4.42 1.87.82 4.04.76 5.85-.16l.1-.05c1.81-.93 3.23-2.54 3.75-4.54l.01-.05c.52-1.99.2-4.09-.89-5.8l.05-.1c1.09-1.71 1.41-3.81.89-5.8l-.01-.05zM12 2c5.52 0 10 4.48 10 10s-4.48 10-10 10S2 17.52 2 12 6.48 2 12 2z"/>
-    </svg>
+    <img
+      src="/images/brand/gpt-ai-tile.svg"
+      alt="GPT-5.2 AI icon"
+      {...props}
+    />
   ),
   Gemini: (props: any) => (
     <svg viewBox="0 0 24 24" fill="none" {...props}>
@@ -36,10 +49,11 @@ export const ICONS = {
     </svg>
   ),
   WhatsApp: (props: any) => (
-    <svg viewBox="0 0 24 24" {...props}>
-      <path d="M12.031 2c-5.508 0-9.985 4.477-9.985 9.985 0 2.15.684 4.141 1.844 5.766l-1.891 6.249 6.406-1.891c1.555.844 3.328 1.328 5.211 1.328 5.508 0 9.985-4.477 9.985-9.985S17.539 2 12.031 2z" fill="#25D366"/>
-      <path d="M16.484 14.125c-.242-.121-1.43-.703-1.652-.781-.223-.078-.383-.121-.547.121-.164.242-.633.781-.773.945-.141.164-.281.184-.523.063-.242-.121-1.023-.375-1.945-1.195-.719-.641-1.203-1.43-1.344-1.672-.141-.242-.016-.371.105-.492.109-.109.242-.281.363-.422.121-.141.16-.242.242-.402.082-.164.043-.305-.02-.426-.063-.121-.547-1.316-.75-1.805-.199-.477-.402-.41-.547-.418-.141-.008-.305-.008-.465-.008-.16 0-.422.063-.645.305-.223.242-.852.832-.852 2.027s.871 2.344.992 2.508c.121.164 1.711 2.613 4.141 3.66.578.25 1.031.398 1.383.508.582.184 1.113.156 1.535.094.469-.07 1.43-.586 1.633-1.152.203-.566.203-1.055.141-1.152-.063-.098-.242-.156-.484-.277z" fill="white"/>
-    </svg>
+    <img
+      src="/images/brand/whatsapp.svg"
+      alt="WhatsApp logo"
+      {...props}
+    />
   ),
   Check: (props: any) => (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" {...props}>
@@ -104,6 +118,11 @@ export const ICONS = {
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  ),
+  Documentation: (props: any) => (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
     </svg>
   )
 };

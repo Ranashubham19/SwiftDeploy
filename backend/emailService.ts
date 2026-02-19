@@ -1,23 +1,57 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
+// Load environment variables in the email service as well
 dotenv.config();
 
+const OTP_EXPIRES_MS = 10 * 60 * 1000;
+const OTP_MAX_FAILED_ATTEMPTS = 5;
+const DEV_OTP_FALLBACK_ENABLED = process.env.ENABLE_DEV_OTP_FALLBACK === 'true';
+
+type OtpRecord = {
+  codeHash: Buffer;
+  expiresAt: Date;
+  failedAttempts: number;
+};
+
 // In-memory storage for verification codes (in production, use a proper database)
-const verificationCodes = new Map<string, { code: string; expiresAt: Date }>();
+const verificationCodes = new Map<string, OtpRecord>();
+const devPlainCodes = new Map<string, string>();
+
+// In-memory storage for registered users with password hashes (in production, use a proper database)
+type User = {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+  plan: 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
+  isSubscribed: boolean;
+};
+const registeredUsers = new Map<string, User>(); // Store registered users with their password hashes
+const pendingSignups = new Map<string, { id: string; email: string; name: string; passwordHash: string; createdAt: Date }>();
 
 // Create transporter with secure settings
 const createTransport = () => {
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+
+  if (!smtpUser || !smtpPass) {
+    return null;
+  }
+
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false, // true for 465, false for other ports
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+      user: smtpUser,
+      pass: smtpPass,
     },
     tls: {
-      rejectUnauthorized: false // Only for development - set to true in production
+      rejectUnauthorized: process.env.NODE_ENV === 'production'
     }
   });
 
@@ -31,49 +65,156 @@ const generateVerificationCode = (): string => {
 
 // Store verification code with 10-minute expiry
 const storeVerificationCode = (email: string, code: string): void => {
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-  verificationCodes.set(email, { code, expiresAt });
-  console.log(`[EMAIL] Stored verification code for ${email}: ${code} (expires at ${expiresAt.toISOString()})`);
+  const normalizedEmail = email.toLowerCase();
+  const expiresAt = new Date(Date.now() + OTP_EXPIRES_MS);
+  const codeHash = crypto.createHash('sha256').update(code).digest();
+  verificationCodes.set(normalizedEmail, { codeHash, expiresAt, failedAttempts: 0 });
+  if (process.env.NODE_ENV !== 'production') {
+    devPlainCodes.set(normalizedEmail, code);
+  }
 };
 
 // Validate verification code
-export const validateVerificationCode = (email: string, code: string): boolean => {
-  const stored = verificationCodes.get(email);
+export const validateVerificationCode = (email: string, code: string): { ok: boolean; reason?: 'missing' | 'expired' | 'attempts_exceeded' | 'invalid' } => {
+  const normalizedEmail = email.toLowerCase();
+  const stored = verificationCodes.get(normalizedEmail);
   
   if (!stored) {
-    console.log(`[EMAIL] No verification code found for ${email}`);
-    return false;
+    return { ok: false, reason: 'missing' };
   }
   
   if (new Date() > stored.expiresAt) {
-    console.log(`[EMAIL] Verification code for ${email} has expired`);
-    verificationCodes.delete(email); // Clean up expired code
-    return false;
+    verificationCodes.delete(normalizedEmail); // Clean up expired code
+    pendingSignups.delete(normalizedEmail);
+    return { ok: false, reason: 'expired' };
+  }
+
+  if (stored.failedAttempts >= OTP_MAX_FAILED_ATTEMPTS) {
+    verificationCodes.delete(normalizedEmail);
+    pendingSignups.delete(normalizedEmail);
+    return { ok: false, reason: 'attempts_exceeded' };
   }
   
-  const isValid = stored.code === code;
-  console.log(`[EMAIL] Verification code validation for ${email}: ${isValid ? 'SUCCESS' : 'FAILED'}`);
+  const providedHash = crypto.createHash('sha256').update(code).digest();
+  const isValid = providedHash.length === stored.codeHash.length && crypto.timingSafeEqual(providedHash, stored.codeHash);
   
   if (isValid) {
-    verificationCodes.delete(email); // Remove used code
+    verificationCodes.delete(normalizedEmail); // Remove used code
+    devPlainCodes.delete(normalizedEmail);
+    return { ok: true };
   }
   
-  return isValid;
+  stored.failedAttempts += 1;
+  if (stored.failedAttempts >= OTP_MAX_FAILED_ATTEMPTS) {
+    verificationCodes.delete(normalizedEmail);
+    pendingSignups.delete(normalizedEmail);
+    devPlainCodes.delete(normalizedEmail);
+  } else {
+    verificationCodes.set(normalizedEmail, stored);
+  }
+
+  return { ok: false, reason: stored.failedAttempts >= OTP_MAX_FAILED_ATTEMPTS ? 'attempts_exceeded' : 'invalid' };
+};
+
+// Check if email is already registered
+export const isEmailRegistered = (email: string): boolean => {
+  return registeredUsers.has(email.toLowerCase());
+};
+
+// Mark email as registered
+export const markEmailAsRegistered = (email: string, name: string, passwordHash: string): User => {
+  const normalizedEmail = email.toLowerCase();
+  const user: User = {
+    id: crypto.randomUUID(),
+    email: normalizedEmail,
+    name,
+    passwordHash,
+    plan: 'FREE',
+    isSubscribed: false
+  };
+  registeredUsers.set(normalizedEmail, user);
+  pendingSignups.delete(normalizedEmail);
+  return user;
+};
+
+// Get user by email
+export const getUserByEmail = (email: string): User | undefined => {
+  return registeredUsers.get(email.toLowerCase());
+};
+
+// Update password hash for user
+export const updateUserPassword = (email: string, newPasswordHash: string): void => {
+  const user = registeredUsers.get(email.toLowerCase());
+  if (user) {
+    registeredUsers.set(email.toLowerCase(), {
+      ...user,
+      passwordHash: newPasswordHash
+    });
+  }
+};
+
+export const storePendingSignup = (email: string, name: string, passwordHash: string): void => {
+  const normalizedEmail = email.toLowerCase();
+  pendingSignups.set(normalizedEmail, {
+    id: crypto.randomUUID(),
+    email: normalizedEmail,
+    name,
+    passwordHash,
+    createdAt: new Date()
+  });
+};
+
+export const getPendingSignup = (email: string): { id: string; email: string; name: string; passwordHash: string; createdAt: Date } | undefined => {
+  return pendingSignups.get(email.toLowerCase());
+};
+
+export const clearPendingSignup = (email: string): void => {
+  pendingSignups.delete(email.toLowerCase());
+};
+
+export const clearVerificationState = (email: string): void => {
+  const normalizedEmail = email.toLowerCase();
+  verificationCodes.delete(normalizedEmail);
+  devPlainCodes.delete(normalizedEmail);
+};
+
+export const getDevVerificationCode = (email: string): string | undefined => {
+  if (process.env.NODE_ENV === 'production') {
+    return undefined;
+  }
+  return devPlainCodes.get(email.toLowerCase());
+};
+
+export type VerificationSendResult = {
+  success: boolean;
+  message: string;
+  devCode?: string;
 };
 
 // Send verification email
-export const sendVerificationEmail = async (email: string, name: string): Promise<boolean> => {
+export const sendVerificationEmail = async (email: string, name: string): Promise<VerificationSendResult> => {
   try {
-    console.log(`[EMAIL] Generating verification code for ${email}`);
     const code = generateVerificationCode();
     storeVerificationCode(email, code);
     
-    console.log(`[EMAIL] Sending verification email to ${email}`);
-    
     const transporter = createTransport();
+    if (!transporter) {
+      if (process.env.NODE_ENV !== 'production' && DEV_OTP_FALLBACK_ENABLED) {
+        console.log(`[DEV_OTP] ${email}: ${code}`);
+        return { success: true, message: 'OTP generated in local mode', devCode: code };
+      }
+      clearVerificationState(email);
+      return { success: false, message: 'Email service is not configured. Contact support.' };
+    }
     
+    const emailFrom = process.env.EMAIL_FROM || process.env.SMTP_USER;
+    if (!emailFrom) {
+      clearVerificationState(email);
+      return { success: false, message: 'Email sender is not configured. Contact support.' };
+    }
+
     const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+      from: emailFrom,  // Use the fallback value
       to: email,
       subject: 'SwiftDeploy - Email Verification Code',
       html: `
@@ -113,23 +254,40 @@ export const sendVerificationEmail = async (email: string, name: string): Promis
       `
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`[EMAIL] Verification email sent successfully to ${email}`);
-    console.log(`[EMAIL] Message ID: ${info.messageId}`);
+    // Validate SMTP auth/connectivity before attempting delivery.
+    await transporter.verify();
+    await transporter.sendMail(mailOptions);
     
-    return true;
+    return { success: true, message: 'OTP sent' };
   } catch (error) {
-    console.error(`[EMAIL] Failed to send verification email to ${email}:`, error);
-    return false;
+    if (process.env.NODE_ENV !== 'production' && DEV_OTP_FALLBACK_ENABLED) {
+      const fallbackCode = getDevVerificationCode(email);
+      if (fallbackCode) {
+        console.log(`[DEV_OTP_FALLBACK] ${email}: ${fallbackCode}`);
+        return { success: true, message: 'OTP generated in local mode', devCode: fallbackCode };
+      }
+    }
+
+    clearVerificationState(email);
+    const err = error as any;
+    const code = typeof err?.code === 'string' ? err.code : '';
+    if (code === 'EAUTH') {
+      return { success: false, message: 'SMTP authentication failed. Update SMTP credentials.' };
+    }
+    if (code === 'ECONNECTION' || code === 'ETIMEDOUT' || code === 'ESOCKET') {
+      return { success: false, message: 'Unable to connect to email server. Try again shortly.' };
+    }
+    return { success: false, message: 'Failed to deliver verification email. Please try again.' };
   }
 };
 
 // Send test email
 export const sendTestEmail = async (email: string): Promise<boolean> => {
   try {
-    console.log(`[EMAIL] Sending test email to ${email}`);
-    
     const transporter = createTransport();
+    if (!transporter) {
+      return false;
+    }
     
     const mailOptions = {
       from: process.env.EMAIL_FROM || process.env.SMTP_USER,
@@ -162,13 +320,10 @@ export const sendTestEmail = async (email: string): Promise<boolean> => {
       `
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`[EMAIL] Test email sent successfully to ${email}`);
-    console.log(`[EMAIL] Message ID: ${info.messageId}`);
+    await transporter.sendMail(mailOptions);
     
     return true;
   } catch (error) {
-    console.error(`[EMAIL] Failed to send test email to ${email}:`, error);
     return false;
   }
 };

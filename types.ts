@@ -23,7 +23,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  plan: 'PRO' | 'CUSTOM';
+  plan: 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
   isSubscribed: boolean;
 }
 

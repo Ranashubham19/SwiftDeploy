@@ -1,8 +1,10 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Bot, Platform, AIModel, BotStatus } from '../types';
 import { ICONS } from '../constants';
+import { apiUrl } from '../utils/api';
+import BrandLogo from '../components/BrandLogo';
 
 const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ user, bots, setBots }) => {
   const navigate = useNavigate();
@@ -10,6 +12,37 @@ const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ u
   const [token, setToken] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployStep, setDeployStep] = useState<'input' | 'verifying' | 'syncing'>('input');
+  const [videoError, setVideoError] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+  const [showManualPlay, setShowManualPlay] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const node = videoRef.current;
+    if (!node || videoError) return;
+    node.muted = true;
+    node.playsInline = true;
+    node
+      .play()
+      .then(() => {
+        setShowManualPlay(false);
+      })
+      .catch(() => {
+        setShowManualPlay(true);
+      });
+  }, [videoReady, videoError]);
+
+  const handleManualPlay = async () => {
+    const node = videoRef.current;
+    if (!node) return;
+    try {
+      node.muted = true;
+      await node.play();
+      setShowManualPlay(false);
+    } catch {
+      setShowManualPlay(true);
+    }
+  };
 
   const handleConnect = async () => {
     if (!token) return;
@@ -27,7 +60,7 @@ const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ u
     
     try {
       // Deploy bot via backend API
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/deploy-bot`, {
+      const response = await fetch(apiUrl('/deploy-bot'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -60,12 +93,17 @@ const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ u
         setIsDeploying(false);
         navigate('/dashboard');
       } else {
+        if (response.status === 402) {
+          alert('Free plan limit reached. Please upgrade to Pro Fleet to deploy additional bots.');
+          navigate('/billing?cycle=monthly');
+          return;
+        }
         throw new Error(result.error || 'Deployment failed');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Deployment failed:', error);
       setIsDeploying(false);
-      alert(`Deployment failed: ${error.message}`);
+      alert(`Deployment failed: ${error?.message || 'Unable to connect to backend.'}`);
     }
   };
 
@@ -74,21 +112,21 @@ const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ u
   };
 
   return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 relative font-sans">
+    <div className="min-h-screen bg-[#050a16] flex flex-col items-center justify-center p-6 relative font-sans">
       <div className="stars opacity-50"></div>
       
       {/* Branding Overlay */}
       <div className="absolute top-12 left-16 hidden md:block">
-        <span className="text-zinc-700 font-bold text-sm tracking-tighter italic uppercase tracking-widest">SwiftDeploy.<span className="italic">ai</span></span>
+        <BrandLogo />
       </div>
       <div className="absolute top-12 right-16 hidden md:block">
-        <button className="text-zinc-700 font-bold text-sm flex items-center gap-2 hover:text-white transition-colors uppercase tracking-widest">
+        <button onClick={() => navigate('/contact')} className="text-zinc-700 font-bold text-sm flex items-center gap-2 hover:text-white transition-colors uppercase tracking-widest">
            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
            Contact Support
         </button>
       </div>
 
-      <div className="w-full max-w-[940px] bg-[#0c0c0e] border border-white/5 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] flex flex-col md:row overflow-hidden animate-in fade-in zoom-in-95 duration-700 relative">
+      <div className="w-full max-w-[940px] bg-[#091428] border border-white/10 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] flex flex-col md:row overflow-hidden animate-in fade-in zoom-in-95 duration-700 relative">
         
         {isDeploying && (
           <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-300">
@@ -152,75 +190,62 @@ const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ u
               <button 
                 onClick={handleConnect}
                 disabled={!token || isDeploying}
-                className="w-full bg-[#333333] hover:bg-[#444444] disabled:opacity-20 disabled:cursor-not-allowed text-white py-6 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 shadow-2xl active:scale-[0.98] group italic uppercase"
+                className="w-full btn-deploy-gradient disabled:opacity-20 disabled:cursor-not-allowed text-white py-6 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 shadow-2xl active:scale-[0.98] group uppercase"
               >
                 Launch SwiftDeploy Node <span className="text-zinc-500 group-hover:text-white transition-colors">✓</span>
               </button>
             </div>
           </div>
 
-          {/* Right Side: Visual Mockup */}
-          <div className="hidden lg:flex w-[400px] bg-[#09090b] relative items-center justify-center p-10 overflow-hidden">
-             {/* Glowing orb behind phone */}
-             <div className="absolute w-[300px] h-[300px] bg-blue-600/10 rounded-full blur-[100px]"></div>
-             
-             {/* Phone Mockup */}
-             <div className="w-full h-[640px] bg-black rounded-[54px] border-[12px] border-[#1a1a1c] shadow-[0_40px_80px_rgba(0,0,0,0.8)] relative overflow-hidden flex flex-col">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[140px] h-[34px] bg-[#1a1a1c] rounded-b-3xl z-20"></div>
-                
-                {/* Simulated Screen */}
-                <div className="flex-1 bg-[#0c0c0e] pt-12 flex flex-col">
-                   <div className="px-6 mb-6 flex items-center justify-between">
-                      <div className="flex-1 bg-zinc-900 h-9 rounded-xl flex items-center px-4 gap-3">
-                         <svg className="w-4 h-4 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                         <span className="text-zinc-500 text-sm font-medium uppercase tracking-tighter">BotF</span>
-                         <div className="w-0.5 h-4 bg-blue-500 animate-pulse"></div>
-                      </div>
-                      <span className="text-zinc-600 text-xs font-bold ml-3 uppercase tracking-widest">Cancel</span>
-                   </div>
-
-                   <div className="px-6 space-y-6">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-700">Global Search</p>
-                      
-                      <div className="flex items-center gap-4">
-                         <div className="w-12 h-12 rounded-full bg-[#0088cc] flex items-center justify-center">
-                            <ICONS.Telegram className="w-7 h-7 text-white" />
-                         </div>
-                         <div className="flex-1 border-b border-white/5 pb-5">
-                            <div className="flex items-center gap-2">
-                               <span className="text-sm font-bold text-white italic">BotFather</span>
-                               <svg className="w-3.5 h-3.5 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                            </div>
-                            <p className="text-xs text-zinc-600">@BotFather</p>
-                         </div>
-                      </div>
-
-                      {[1,2,3,4].map(i => (
-                        <div key={i} className="flex items-center gap-4 opacity-20">
-                           <div className="w-12 h-12 rounded-full bg-zinc-900"></div>
-                           <div className="flex-1 border-b border-white/5 pb-5">
-                              <div className="w-32 h-2.5 bg-zinc-800 rounded"></div>
-                              <div className="w-16 h-2 bg-zinc-900 rounded mt-2"></div>
-                           </div>
-                        </div>
-                      ))}
-                   </div>
-
-                   {/* iOS Keyboard Mockup */}
-                   <div className="mt-auto bg-[#1a1a1c]/80 backdrop-blur-xl p-1.5 grid grid-cols-10 gap-1.5 pt-4 pb-10 px-3">
-                      {['q','w','e','r','t','y','u','i','o','p','a','s','d','f','g','h','j','k','l','z','x','c','v','b','n','m'].map(k => (
-                        <div key={k} className="h-11 bg-[#2c2c2e] rounded-lg text-white flex items-center justify-center font-medium uppercase text-xs shadow-sm">{k}</div>
-                      ))}
-                      <div className="col-span-10 grid grid-cols-10 gap-1.5 mt-1">
-                         <div className="col-span-2 h-11 bg-[#3a3a3c] rounded-lg flex items-center justify-center text-[10px] text-white">123</div>
-                         <div className="col-span-6 h-11 bg-[#3a3a3c] rounded-lg flex items-center justify-center text-[10px] text-white">space</div>
-                         <div className="col-span-2 h-11 bg-blue-600 rounded-lg flex items-center justify-center">
-                            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                         </div>
-                      </div>
-                   </div>
+          {/* Right Side: Demo Video */}
+          <div className="hidden md:flex w-[400px] bg-[#09090b] relative items-center justify-center p-10 overflow-hidden">
+            <div className="absolute w-[300px] h-[300px] bg-blue-600/10 rounded-full blur-[100px]"></div>
+            <div className="w-full h-[640px] bg-black rounded-[54px] border-[12px] border-[#1a1a1c] shadow-[0_40px_80px_rgba(0,0,0,0.8)] relative overflow-hidden">
+              {!videoError ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  controls
+                  preload="auto"
+                  className="w-full h-full object-cover"
+                  onLoadedData={() => setVideoReady(true)}
+                  onError={() => setVideoError(true)}
+                >
+                  <source src="/videos/demo.mp4" type="video/mp4" />
+                  <source src="/videos/telegram-token-tutorial.mp4" type="video/mp4" />
+                  <source src="/videos/telegram-token-tutorial.webm" type="video/webm" />
+                  Your browser does not support the video tag.
+                </video>
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center px-6 text-center bg-[#0b0b0d]">
+                  <p className="text-white font-bold mb-3">Video preview failed to load</p>
+                  <a
+                    href="/videos/demo.mp4"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-deploy-gradient px-4 py-2 rounded-lg text-sm font-black uppercase"
+                  >
+                    Open Demo Video
+                  </a>
                 </div>
-             </div>
+              )}
+              {!videoError && showManualPlay && (
+                <button
+                  onClick={handleManualPlay}
+                  className="absolute inset-x-6 bottom-20 btn-deploy-gradient py-3 rounded-xl text-xs font-black uppercase z-20"
+                >
+                  Play Demo Video
+                </button>
+              )}
+              <div className="absolute bottom-4 left-4 right-4 bg-black/70 backdrop-blur-sm rounded-xl p-3 z-10">
+                <p className="text-white text-xs font-bold text-center uppercase tracking-wider">
+                  Telegram Setup Demo
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

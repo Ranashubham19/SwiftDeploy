@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="48" viewBox="0 0 120 48" fill="none">
+  <rect x="1" y="1" width="118" height="46" rx="10" fill="#0B1220" stroke="#334155"/>
+  <rect x="12" y="11" width="26" height="26" rx="6" fill="#00BAF2"/>
+  <rect x="40" y="11" width="26" height="26" rx="6" fill="#0F4A8A"/>
+  <text x="72" y="30" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="15" font-weight="700">Paytm</text>
+</svg>

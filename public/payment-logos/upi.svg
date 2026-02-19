@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="48" viewBox="0 0 120 48" fill="none">
+  <rect x="1" y="1" width="118" height="46" rx="10" fill="#fff" fill-opacity="0.02" stroke="#6b7280" stroke-opacity="0.35"/>
+  <text x="14" y="30" fill="#6D6E71" font-family="Arial, sans-serif" font-size="24" font-style="italic" font-weight="700">UPI</text>
+  <path d="M73 10L89 24L73 38L78 24L73 10Z" fill="#F47A20"/>
+  <path d="M82 10L98 24L82 38L87 24L82 10Z" fill="#1A9B5D"/>
+  <text x="14" y="42" fill="#9CA3AF" font-family="Arial, sans-serif" font-size="7" letter-spacing="0.9">UNIFIED PAYMENTS INTERFACE</text>
+</svg>

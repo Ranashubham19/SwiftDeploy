@@ -1,13 +1,30 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User, Platform } from '../types';
 import { ICONS } from '../constants';
+import { apiUrl } from '../utils/api';
+import BrandLogo from '../components/BrandLogo';
 
 const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   const navigate = useNavigate();
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-3-pro-preview');
+  const [selectedModel, setSelectedModel] = useState<string>('gpt-5-2');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>(Platform.TELEGRAM);
+  const [customCoreCycle, setCustomCoreCycle] = useState<'monthly' | 'yearly'>('monthly');
+
+  // Only redirect on initial load if user is logged in and not manually navigating to home
+  const [hasRedirected, setHasRedirected] = useState(false);
+  
+  useEffect(() => {
+    // Check if user navigated here manually (via URL or navigation)
+    const cameFromNavigation = window.history.state?.usr?.fromNavigation;
+    
+    // Remove automatic redirect to dashboard - users should stay on home page
+    // if (user && !hasRedirected && !cameFromNavigation) {
+    //   setHasRedirected(true);
+    //   navigate('/dashboard', { replace: true });
+    // }
+  }, [user, navigate, hasRedirected]);
 
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
@@ -17,6 +34,8 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
     if (user) {
       if (selectedPlatform === Platform.TELEGRAM) {
         navigate('/connect/telegram', { state: { model: selectedModel } });
+      } else if (selectedPlatform === Platform.DISCORD) {
+        navigate('/connect/discord', { state: { model: selectedModel } });
       } else {
         navigate('/dashboard', { state: { openDeploy: true, platform: selectedPlatform, model: selectedModel } });
       }
@@ -28,12 +47,9 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   return (
     <div className="relative">
       {/* Navigation */}
-      <nav className="fixed top-0 w-full z-50 h-20 md:h-24 flex items-center justify-between px-6 md:px-16 bg-black/20 backdrop-blur-2xl border-b border-white/5">
+      <nav className="theme-nav fixed top-0 w-full z-50 h-20 md:h-24 flex items-center justify-between px-6 md:px-16 backdrop-blur-2xl border-b border-white/10">
         <div className="flex items-center gap-3 group cursor-pointer" onClick={() => navigate('/')}>
-          <div className="w-10 h-10 flex items-center justify-center bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-transform group-hover:scale-105">
-            <svg viewBox="0 0 24 24" fill="white" className="w-6 h-6"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-          </div>
-          <span className="text-xl md:text-2xl font-black tracking-tighter font-heading uppercase italic">SwiftDeploy</span>
+          <BrandLogo />
         </div>
         
         <div className="hidden lg:flex items-center gap-10">
@@ -47,14 +63,57 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
           {!user ? (
             <>
               <Link to="/login?mode=login" className="hidden sm:block text-sm font-bold text-zinc-400 hover:text-white transition-colors mr-2 uppercase tracking-widest">Sign in</Link>
-              <Link to="/login?mode=register" className="bg-white hover:bg-zinc-200 text-black text-sm font-black px-6 md:px-8 py-3 rounded-xl transition-all shadow-xl active:scale-95 uppercase italic">
+              <Link to="/login?mode=register" className="btn-deploy-gradient text-sm font-black px-6 md:px-8 py-3 rounded-xl transition-all active:scale-95 uppercase">
                 Get Started
               </Link>
             </>
           ) : (
-            <Link to="/dashboard" className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-black px-8 py-3 rounded-xl shadow-[0_10px_20px_rgba(59,130,246,0.2)] transition-all uppercase italic">
-              Command Center
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link to="/dashboard" className="btn-deploy-gradient text-sm font-black px-8 py-3 rounded-xl transition-all uppercase">
+                Command Center
+              </Link>
+              <div className="relative group">
+                <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/10 shadow-lg bg-zinc-900 cursor-pointer">
+                  <img 
+                    src={`https://ui-avatars.com/api/?name=${user.name}&background=random&color=fff&size=128`} 
+                    alt={user.name} 
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="absolute right-0 mt-2 w-48 bg-[#0c0c0e] border border-white/10 rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <div className="px-4 py-3 border-b border-white/5">
+                    <p className="text-white font-bold text-sm truncate">{user.name}</p>
+                    <p className="text-zinc-500 text-xs truncate">{user.email}</p>
+                  </div>
+                  <button 
+                    onClick={async () => {
+                      try {
+                        const response = await fetch(apiUrl('/logout'), {
+                          method: 'GET',
+                          credentials: 'include'
+                        });
+                        
+                        if (response.ok) {
+                          // Clear local storage and reload
+                          localStorage.clear();
+                          window.location.href = '/';
+                        } else {
+                          // Fallback if server request fails
+                          window.location.href = '/';
+                        }
+                      } catch (error) {
+                        console.error('Logout failed:', error);
+                        // Even if the request fails, still logout locally
+                        window.location.href = '/';
+                      }
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors flex items-center gap-2"
+                  >
+                    <ICONS.Settings className="w-4 h-4" /> Sign Out
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </nav>
@@ -62,13 +121,13 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
       {/* Hero Section */}
       <section className="min-h-screen pt-40 md:pt-48 pb-20 px-6 flex flex-col items-center">
         <div className="text-center mb-16 max-w-5xl">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-black uppercase tracking-[0.2em] mb-8">
-            <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-400/10 border border-cyan-300/20 text-cyan-300 text-xs font-black uppercase tracking-[0.2em] mb-8">
+            <span className="w-2 h-2 bg-cyan-300 rounded-full animate-pulse"></span>
             Global Cluster Provisioning Online
           </div>
-          <h1 className="text-5xl md:text-8xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase italic">
-            Deploy <span className="text-blue-500">Autonomous</span> Bots <br /> 
-            in <span className="text-zinc-500 italic">Record Time</span>
+          <h1 className="text-5xl md:text-8xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase">
+            Deploy <span className="text-cyan-300">Autonomous</span> Bots <br /> 
+            in <span className="text-zinc-400">Record Time</span>
           </h1>
           <p className="text-lg md:text-xl text-zinc-400 font-medium max-w-3xl mx-auto leading-relaxed italic">
             Authorized infrastructure for Telegram, Discord, and WhatsApp. Scalable cloud backbone for enterprise AI agents.
@@ -86,16 +145,16 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', icon: <ICONS.Gemini className="w-6 h-6" /> },
-                { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', icon: <ICONS.Claude className="w-6 h-6" /> },
-                { id: 'gpt-5-2', label: 'GPT-5.2', icon: <ICONS.GPT className="w-6 h-6 text-white" /> }
+                { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', icon: <ICONS.Claude className="w-8 h-8 text-[#D97757]" /> },
+                { id: 'gpt-5-2', label: 'GPT-5.2', icon: <ICONS.GPT className="w-8 h-8" />, iconWrapClass: 'w-8 h-8' },
+                { id: 'gemini-3-pro-preview', label: 'Gemini 3 Flash', icon: <ICONS.Gemini className="w-8 h-8" /> }
               ].map((m) => (
-                <button 
+                <button
                   key={m.id}
                   onClick={() => setSelectedModel(m.id)}
-                  className={`flex items-center gap-4 px-6 py-4 rounded-[20px] transition-all relative ${selectedModel === m.id ? 'btn-model-active' : 'btn-model'}`}
+                  className={`flex items-center gap-4 px-7 py-5 rounded-[28px] border transition-all relative ${selectedModel === m.id ? 'bg-white/[0.06] border-white/40 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.25)]' : 'bg-black/30 border-white/10 hover:border-white/20'}`}
                 >
-                  <div className="flex items-center justify-center w-8 h-8">{m.icon}</div>
+                  {m.icon && <div className={`flex items-center justify-center ${m.iconWrapClass || 'w-8 h-8'}`}>{m.icon}</div>}
                   <span className="text-[16px] font-bold text-zinc-100 whitespace-nowrap">{m.label}</span>
                   {selectedModel === m.id && <ICONS.Check className="w-5 h-5 text-zinc-400 ml-auto" />}
                 </button>
@@ -111,7 +170,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button 
                 onClick={() => setSelectedPlatform(Platform.TELEGRAM)}
-                className={`flex items-center gap-4 px-6 py-4 rounded-[20px] border transition-all ${selectedPlatform === Platform.TELEGRAM ? 'bg-white/5 border-white/30 shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'bg-transparent border-white/5 hover:border-white/10'}`}
+                className={`flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all ${selectedPlatform === Platform.TELEGRAM ? 'bg-white/5 border-white/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]' : 'bg-transparent border-white/10 hover:border-white/20'}`}
               >
                 <div className="w-8 h-8 flex items-center justify-center shrink-0">
                   <ICONS.Telegram className="w-8 h-8" />
@@ -119,25 +178,28 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <span className="text-[16px] font-bold text-zinc-100">Telegram</span>
               </button>
 
-              <div className="flex items-center gap-4 px-6 py-4 rounded-[20px] border border-white/5 opacity-60 relative group cursor-not-allowed">
+              <button
+                onClick={() => setSelectedPlatform(Platform.DISCORD)}
+                className={`flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all ${selectedPlatform === Platform.DISCORD ? 'bg-white/5 border-white/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]' : 'bg-transparent border-white/10 hover:border-white/20'}`}
+              >
                 <div className="w-8 h-8 flex items-center justify-center shrink-0">
                   <ICONS.Discord className="w-8 h-8" />
                 </div>
-                <div>
-                  <span className="text-[16px] font-bold text-zinc-100 block">Discord</span>
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block leading-none">In Alpha</span>
-                </div>
-              </div>
+                <span className="text-[16px] font-bold text-zinc-100">Discord</span>
+              </button>
 
-              <div className="flex items-center gap-4 px-6 py-4 rounded-[20px] border border-white/5 opacity-60 relative group cursor-not-allowed">
+              <button
+                onClick={() => setSelectedPlatform(Platform.WHATSAPP)}
+                className={`relative flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all ${selectedPlatform === Platform.WHATSAPP ? 'bg-white/5 border-white/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]' : 'bg-transparent border-white/10 hover:border-white/20'}`}
+              >
+                <span className="absolute -top-2 right-3 text-[10px] font-black uppercase tracking-widest bg-orange-500 text-white px-3 py-1 rounded-full shadow-[0_0_14px_rgba(249,115,22,0.45)]">
+                  High Demand
+                </span>
                 <div className="w-8 h-8 flex items-center justify-center shrink-0">
                   <ICONS.WhatsApp className="w-8 h-8" />
                 </div>
-                <div>
-                  <span className="text-[16px] font-bold text-zinc-100 block">WhatsApp</span>
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block leading-none">Pending</span>
-                </div>
-              </div>
+                <span className="text-[16px] font-bold text-zinc-100">WhatsApp</span>
+              </button>
             </div>
           </div>
 
@@ -174,6 +236,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 {user ? `Connect ${selectedPlatform.charAt(0) + selectedPlatform.slice(1).toLowerCase()} to continue.` : 'Initialize cluster link to continue.'}{' '}
                 <span className="text-blue-500">Only 11 nodes remaining in this region.</span>
               </p>
+
             </div>
           </div>
         </div>
@@ -187,22 +250,89 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
            
            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {[
-                { title: "Long-Term Memory", desc: "Bots retain context across months of conversation with persistent vector databases.", icon: <ICONS.Check className="text-blue-500" /> },
-                { title: "Gemini 3 Pro Cluster", desc: "Powered by the latest reasoning engines with advanced thinking budgets.", icon: <ICONS.Gemini className="w-8 h-8" /> },
-                { title: "Edge Signal Routing", desc: "Sub-100ms response times via our global webhook tunneling architecture.", icon: <svg className="w-6 h-6 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> },
-                { title: "Multimodal Native", desc: "Bots process images, documents, and audio files without external plugins.", icon: <ICONS.Claude className="w-6 h-6" /> },
-                { title: "Real-time Monitoring", desc: "Full inspection of signal traffic and AI reasoning logs via dashboard.", icon: <ICONS.Dashboard className="w-6 h-6" /> },
-                { title: "Automated Handshakes", desc: "One-click deployment for Telegram bots using BotFather token validation.", icon: <ICONS.Telegram className="w-6 h-6" /> }
+                {
+                  title: "Conversation Memory",
+                  desc: "Persistent context windows retain user history, intent, and state transitions across long-running threads.",
+                  metric: "Context Recall: 99.2%",
+                  icon: <ICONS.Check className="text-blue-500" />
+                },
+                {
+                  title: "Reasoning Cluster",
+                  desc: "Production-grade model routing with deterministic fallback policies and latency-aware inference paths.",
+                  metric: "Median Reasoning: 1.8s",
+                  icon: <ICONS.Gemini className="w-8 h-8" />
+                },
+                {
+                  title: "Edge Signal Routing",
+                  desc: "Geo-aware webhook routing keeps regional latency low and delivery consistency high during peak traffic.",
+                  metric: "P95 Handshake: 142ms",
+                  icon: <svg className="w-6 h-6 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                },
+                {
+                  title: "Multimodal Intake",
+                  desc: "Images, documents, and audio are normalized into one processing stream for consistent downstream automation.",
+                  metric: "Supported Inputs: 12+",
+                  icon: <ICONS.Claude className="w-6 h-6" />
+                },
+                {
+                  title: "Live Observability",
+                  desc: "Per-bot telemetry, response quality traces, and operational events are visible in the command dashboard.",
+                  metric: "Live Refresh: 5s",
+                  icon: <ICONS.Dashboard className="w-6 h-6" />
+                },
+                {
+                  title: "Verified Provisioning",
+                  desc: "Credential checks, command sync, and channel verification happen before deployment goes active.",
+                  metric: "Deploy Validation: Strict",
+                  icon: <ICONS.Telegram className="w-6 h-6" />
+                }
               ].map((feat, i) => (
-                <div key={i} className="config-card p-10 bg-[#0c0c0e]/40 border-white/5 hover:border-white/10 transition-all group">
+                <div key={i} className="config-card p-10 bg-[#0c0c0e]/45 border-white/5 hover:border-cyan-300/25 transition-all group">
                   <div className="mb-6 w-14 h-14 flex items-center justify-center bg-white/5 rounded-2xl group-hover:scale-110 transition-transform">
                     {feat.icon}
                   </div>
                   <h4 className="text-2xl font-black text-white italic mb-3 uppercase tracking-tighter">{feat.title}</h4>
-                  <p className="text-zinc-500 text-sm font-bold leading-relaxed italic">{feat.desc}</p>
+                  <p className="text-zinc-400 text-sm font-bold leading-relaxed italic">{feat.desc}</p>
+                  <div className="mt-5 inline-flex items-center px-3 py-1 rounded-full border border-cyan-300/20 bg-cyan-500/10 text-cyan-200 text-[10px] font-black uppercase tracking-widest">
+                    {feat.metric}
+                  </div>
                 </div>
               ))}
            </div>
+        </div>
+
+        {/* Trust and Security Section */}
+        <div className="w-full max-w-7xl px-6 mb-40">
+          <div className="config-card p-10 md:p-16 border-cyan-300/20 bg-cyan-500/[0.03]">
+            <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-10 mb-12">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan-300 mb-4">Security Fabric</p>
+                <h2 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase font-heading mb-4">Built for Secure Operations</h2>
+                <p className="text-zinc-400 max-w-2xl text-lg">Protection layers now include OTP abuse throttling, brute-force lockouts, strict request limits, secure headers, and hardened session controls.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 min-w-[220px]">
+                <div className="bg-[#07111f] border border-white/10 rounded-2xl p-4 text-center">
+                  <p className="text-cyan-300 text-2xl font-black">64KB</p>
+                  <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Max JSON Body</p>
+                </div>
+                <div className="bg-[#07111f] border border-white/10 rounded-2xl p-4 text-center">
+                  <p className="text-cyan-300 text-2xl font-black">15m</p>
+                  <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Login Lock Window</p>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                'Smart email-domain validation with typo hints',
+                'OTP request cooldown and abuse limits',
+                'Security headers and hardened API surface'
+              ].map((item) => (
+                <div key={item} className="bg-[#0a1526] border border-white/10 rounded-2xl p-5 text-zinc-300 font-semibold">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Pricing Section */}
@@ -212,15 +342,46 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
               <p className="text-zinc-500 font-bold italic text-lg">Predictable pricing for global AI distribution.</p>
            </div>
 
-           <div className="grid md:grid-cols-2 gap-10">
+           <div className="grid md:grid-cols-3 gap-8">
+              <div className="config-card p-10 bg-white/[0.01] border-white/10 flex flex-col relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-7">
+                   <span className="text-[10px] font-black uppercase tracking-widest bg-zinc-700 text-white px-4 py-2 rounded-full">FREE</span>
+                </div>
+                <h3 className="text-3xl font-black italic text-white mb-2 uppercase tracking-tighter">Starter</h3>
+                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Limited trial for testing SwiftDeploy quickly.</p>
+                <div className="flex items-baseline gap-2 mb-10">
+                  <span className="text-6xl font-black text-white italic tracking-tighter">$0</span>
+                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ free</span>
+                </div>
+                <ul className="space-y-4 mb-10 flex-1">
+                  {["1 Telegram Bot Limit", "Up to 7 Days Trial Window", "Basic Queue Priority", "Community Support", "Upgrade Required After Limit"].map(f => (
+                    <li key={f} className="flex items-center gap-3 text-[12px] font-bold text-zinc-400 italic">
+                      <ICONS.Check className="w-4 h-4 text-zinc-500" /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => {
+                    if (user) {
+                      navigate('/connect/telegram');
+                    } else {
+                      navigate('/login?mode=register');
+                    }
+                  }}
+                  className="w-full py-5 bg-white/10 border border-white/20 text-white font-black rounded-2xl text-base hover:bg-white/15 transition-all uppercase"
+                >
+                  Start Free
+                </button>
+              </div>
+
               <div className="config-card p-12 bg-blue-600/[0.04] border-blue-500/30 flex flex-col relative overflow-hidden group hover:scale-[1.02] transition-transform">
                 <div className="absolute top-0 right-0 p-8">
                    <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-4 py-2 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.4)]">AUTHORIZED</span>
                 </div>
                 <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 italic leading-relaxed">Advanced production node for active businesses.</p>
+                <p className="text-zinc-500 text-sm font-bold italic mb-8 italic leading-relaxed">Advanced production node billed monthly.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">$30</span>
+                  <span className="text-7xl font-black text-white italic tracking-tighter">$39</span>
                   <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ month</span>
                 </div>
                 <ul className="space-y-4 mb-12 flex-1">
@@ -230,24 +391,85 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                     </li>
                   ))}
                 </ul>
-                <button onClick={() => navigate('/login?mode=login')} className="w-full py-6 bg-white text-black font-black italic rounded-3xl text-xl hover:bg-zinc-200 transition-all shadow-xl active:scale-95 uppercase italic">Allocate Node</button>
+                <button 
+                  onClick={() => {
+                    if (user) {
+                      navigate('/billing?cycle=monthly');
+                    } else {
+                      navigate('/login?mode=login');
+                    }
+                  }} 
+                  className="w-full py-6 bg-white text-black font-black italic rounded-3xl text-xl hover:bg-zinc-200 transition-all shadow-xl active:scale-95 uppercase italic"
+                >
+                  Subscribe
+                </button>
               </div>
 
-              <div className="config-card p-12 bg-white/[0.01] border-white/5 flex flex-col opacity-70 group hover:opacity-100 transition-opacity">
-                <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Custom Core</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Tailored infrastructure for massive agent fleets.</p>
+              <div className="config-card p-12 bg-emerald-600/[0.04] border-emerald-500/30 flex flex-col relative overflow-hidden group hover:scale-[1.02] transition-transform">
+                <div className="absolute top-0 right-0 p-8">
+                   <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-500 text-black px-4 py-2 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.4)]">BEST VALUE</span>
+                </div>
+                <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet Yearly</h3>
+                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Annual contract with better savings.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">Custom</span>
+                  <span className="text-7xl font-black text-white italic tracking-tighter">$399</span>
+                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ year</span>
                 </div>
                 <ul className="space-y-4 mb-12 flex-1">
-                  {["Unlimited Deployment Nodes", "Full Cluster White-label", "On-premise Private Cloud", "Dedicated Solutions Engineer", "SLA Guarantee"].map(f => (
-                    <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-600 italic">
-                      <ICONS.Check className="w-4 h-4 text-zinc-800" /> {f}
+                  {["Everything in Monthly Pro", "2 Months Price Advantage", "Long-Term Stability Pricing", "Priority Enterprise Queues", "Annual Success Review"].map(f => (
+                    <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-300 italic">
+                      <ICONS.Check className="w-4 h-4 text-emerald-400" /> {f}
                     </li>
                   ))}
                 </ul>
-                <button className="w-full py-6 bg-white/5 border border-white/10 text-zinc-400 font-black italic rounded-3xl text-xl hover:text-white hover:border-white/30 transition-all uppercase">Contact Enterprise</button>
+                <button
+                  onClick={() => {
+                    if (user) {
+                      navigate('/billing?cycle=yearly');
+                    } else {
+                      navigate('/login?mode=login');
+                    }
+                  }}
+                  className="w-full py-6 bg-emerald-400 text-black font-black italic rounded-3xl text-xl hover:bg-emerald-300 transition-all uppercase"
+                >
+                  Subscribe
+                </button>
               </div>
+           </div>
+
+           <div className="config-card p-10 bg-white/[0.01] border-white/5 mt-10">
+             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+               <div>
+                 <h3 className="text-3xl font-black italic text-white uppercase tracking-tighter mb-2">Custom Core</h3>
+                 <p className="text-zinc-500 text-sm font-bold italic">Enterprise infrastructure for very large agent fleets.</p>
+               </div>
+               <div className="inline-flex rounded-xl bg-white/5 border border-white/10 p-1">
+                 {(['monthly', 'yearly'] as const).map((cycle) => (
+                   <button
+                     key={cycle}
+                     onClick={() => setCustomCoreCycle(cycle)}
+                     className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest ${customCoreCycle === cycle ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
+                   >
+                     {cycle}
+                   </button>
+                 ))}
+               </div>
+             </div>
+             <div className="mt-6 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+               <div>
+                 <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Starting at</p>
+                 <p className="text-5xl font-black italic text-white tracking-tighter">
+                   {customCoreCycle === 'yearly' ? '$999' : '$99'}
+                   <span className="text-zinc-600 text-base font-bold"> / {customCoreCycle === 'yearly' ? 'year' : 'month'}</span>
+                 </p>
+               </div>
+               <button
+                 onClick={() => navigate('/contact')}
+                 className="px-8 py-4 bg-white/5 border border-white/10 text-zinc-300 font-black rounded-2xl hover:text-white hover:border-white/30 transition-all uppercase"
+               >
+                 Contact Enterprise
+               </button>
+             </div>
            </div>
         </div>
 
@@ -255,12 +477,9 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
         <footer id="contact" className="w-full max-w-7xl px-6 py-20 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-10">
            <div className="flex flex-col items-center md:items-start">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 flex items-center justify-center bg-zinc-900 rounded-lg">
-                  <svg viewBox="0 0 24 24" fill="white" className="w-5 h-5"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                </div>
-                <span className="text-xl font-black tracking-tighter text-white uppercase italic">SwiftDeploy</span>
+                <BrandLogo compact />
               </div>
-              <p className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.3em]">© 2025 SWIFTDEPLOY OPERATIONS GROUP LLC.</p>
+              <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em]">© 2026 SWIFTDEPLOY OPERATIONS GROUP LLC.</p>
            </div>
            
            <div className="flex gap-12">
@@ -273,7 +492,26 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
               </div>
               <div className="space-y-4">
                  <p className="text-[11px] font-black uppercase tracking-widest text-white italic">Contact</p>
-                 <a href="mailto:ops@swiftdeploy.ai" className="text-xs font-bold text-zinc-500 hover:text-white transition-colors italic uppercase tracking-wider">ops@swiftdeploy.ai</a>
+                 <div className="space-y-2">
+                   <a href="mailto:ops@swiftdeploy.ai" className="flex items-center gap-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-wider">
+                     <svg className="w-3.5 h-3.5 text-cyan-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l9 6 9-6M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                     </svg>
+                     ops@swiftdeploy.ai
+                   </a>
+                   <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
+                     Response SLA: under 4 business hours
+                   </p>
+                   <button
+                     onClick={() => navigate('/contact')}
+                     className="text-xs font-bold text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider flex items-center gap-1"
+                   >
+                     Open Contact Desk
+                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                     </svg>
+                   </button>
+                 </div>
               </div>
            </div>
         </footer>

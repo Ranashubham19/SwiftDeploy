@@ -8,11 +8,15 @@ import { AIModel } from "./types";
  */
 export const generateBotResponse = async (
   prompt: string, 
-  model: AIModel = AIModel.GEMINI_3_PRO, 
+  model: AIModel = AIModel.GEMINI_3_FLASH, 
   history: { role: 'user' | 'model', parts: { text: string }[] }[] = [],
   systemInstruction?: string
 ): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const viteEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
+  const apiKey =
+    viteEnv?.VITE_GEMINI_API_KEY ||
+    viteEnv?.VITE_API_KEY ||
+    (typeof process !== 'undefined' ? (process as any).env?.API_KEY : undefined);
   if (!apiKey) {
     throw new Error("NEURAL_LINK_FAILED: API_KEY_MISSING");
   }
@@ -33,24 +37,39 @@ export const generateBotResponse = async (
       - Ensure there is double spacing between distinct points.
     `;
 
+    // Use Gemini Flash model for better performance
+    const modelName = model === AIModel.GEMINI_3_FLASH ? 'gemini-3-flash-preview' : 'gemini-3-pro-preview';
+    
     const response: GenerateContentResponse = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: modelName,
       contents: [
         ...history,
         { role: 'user', parts: [{ text: sanitizedPrompt }] }
       ],
       config: {
         systemInstruction: systemInstruction || professionalStyle,
-        temperature: 0.3, // Lower temperature for more consistent formatting
-        maxOutputTokens: 4000,
-        thinkingConfig: { thinkingBudget: 2000 }
+        temperature: 0.7, // Slightly higher for more creative responses
+        maxOutputTokens: 2000, // Reduced for faster responses
+        thinkingConfig: { thinkingBudget: 1000 }
       }
     });
 
     return response.text || "No signal response detected.";
   } catch (error) {
     console.error("Dashboard AI Core Error:", error);
-    throw new Error("AI_GENERATION_FAILED");
+    
+    // Enhanced error handling with specific error types
+    if (error instanceof Error) {
+      if (error.message.includes('API_KEY')) {
+        throw new Error("INVALID_API_KEY: Please check your Gemini API configuration");
+      } else if (error.message.includes('quota') || error.message.includes('rate')) {
+        throw new Error("RATE_LIMIT_EXCEEDED: Please try again in a few moments");
+      } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        throw new Error("NETWORK_ERROR: Unable to connect to AI service");
+      }
+    }
+    
+    throw new Error(`AI_GENERATION_FAILED: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };
 
