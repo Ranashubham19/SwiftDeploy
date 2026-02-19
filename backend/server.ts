@@ -754,6 +754,23 @@ const sendDiscordFollowUp = async (
   });
 };
 
+const ensurePrimaryTelegramWebhook = async (): Promise<void> => {
+  if (!isProduction || !TELEGRAM_TOKEN) return;
+  const webhookUrl = `${BASE_URL}/webhook`;
+  const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`;
+  try {
+    const response = await fetch(registerUrl);
+    const data: any = await response.json().catch(() => ({}));
+    if (!data?.ok) {
+      console.warn('[WEBHOOK] Failed to auto-set primary Telegram webhook:', data?.description || 'Unknown error');
+      return;
+    }
+    console.log('[WEBHOOK] Primary Telegram webhook is active:', webhookUrl);
+  } catch (error) {
+    console.warn('[WEBHOOK] Primary Telegram webhook auto-setup failed:', (error as Error).message);
+  }
+};
+
 const sanitizeForTelegram = (text: string): string => {
   return String(text || '')
     .replace(/\r/g, '')
@@ -902,7 +919,21 @@ app.post('/webhook', (req, res) => {
 // Bot-specific webhook routes
 app.post('/webhook/:botId', (req, res) => {
   const { botId } = req.params;
-  const botToken = botTokens.get(botId);
+  let botToken = botTokens.get(botId);
+
+  // Lazy recovery: if process restarted and in-memory map is empty, hydrate from persisted state.
+  if (!botToken) {
+    const state = loadPersistedBotState();
+    const match = state.telegramBots.find((b) => b.botId === botId);
+    if (match?.botToken) {
+      botToken = match.botToken;
+      botTokens.set(match.botId, match.botToken);
+      if (match.ownerEmail) {
+        telegramBotOwners.set(match.botId, match.ownerEmail.trim().toLowerCase());
+        ensureBotTelemetry(match.botId, 'TELEGRAM', match.ownerEmail.trim().toLowerCase());
+      }
+    }
+  }
   
   if (!botToken) {
     console.error(`[WEBHOOK] No token found for bot ${botId}`);
@@ -2335,6 +2366,9 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://localhost:${PORT}`);
   restorePersistedBots().catch((error) => {
     console.warn('[BOT_STATE] Restore routine failed:', (error as Error).message);
+  });
+  ensurePrimaryTelegramWebhook().catch((error) => {
+    console.warn('[WEBHOOK] Primary webhook setup failed:', (error as Error).message);
   });
 });
 
