@@ -334,7 +334,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         ) : null}
 
         <div className="flex flex-col md:flex-row w-full">
-          <div className={`flex-1 p-12 md:p-20 border-b md:border-b-0 ${flowStep === 'success' ? '' : 'md:border-r border-white/5'}`}>
+          <div className={`p-12 md:p-20 border-b md:border-b-0 ${flowStep === 'success' ? 'w-full' : 'flex-1 md:border-r border-white/5'}`}>
             <div className="flex items-center gap-3 mb-12">
               <ICONS.Telegram className="w-9 h-9 shrink-0" />
               <h1 className="text-2xl font-black text-white tracking-tight uppercase italic">Connect Telegram</h1>
@@ -342,53 +342,55 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             {renderFlowCard()}
           </div>
 
-          <div className={`hidden md:flex w-[400px] bg-[#09090b] relative items-center justify-center p-10 overflow-hidden ${flowStep === 'success' ? 'hidden' : ''}`}>
-            <div className="absolute w-[300px] h-[300px] bg-blue-600/10 rounded-full blur-[100px]"></div>
-            <div className="w-full h-[640px] bg-black rounded-[54px] border-[12px] border-[#1a1a1c] shadow-[0_40px_80px_rgba(0,0,0,0.8)] relative overflow-hidden">
-              {!videoError ? (
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  controls
-                  preload="auto"
-                  className="w-full h-full object-cover"
-                  onLoadedData={() => setVideoReady(true)}
-                  onError={() => setVideoError(true)}
-                >
-                  <source src="/videos/demo.mp4" type="video/mp4" />
-                  <source src="/videos/telegram-token-tutorial.mp4" type="video/mp4" />
-                  <source src="/videos/telegram-token-tutorial.webm" type="video/webm" />
-                  Your browser does not support the video tag.
-                </video>
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center px-6 text-center bg-[#0b0b0d]">
-                  <p className="text-white font-bold mb-3">Video preview failed to load</p>
-                  <a
-                    href="/videos/demo.mp4"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-deploy-gradient px-4 py-2 rounded-lg text-sm font-black uppercase"
+          {flowStep !== 'success' ? (
+            <div className="hidden md:flex w-[400px] bg-[#09090b] relative items-center justify-center p-10 overflow-hidden">
+              <div className="absolute w-[300px] h-[300px] bg-blue-600/10 rounded-full blur-[100px]"></div>
+              <div className="w-full h-[640px] bg-black rounded-[54px] border-[12px] border-[#1a1a1c] shadow-[0_40px_80px_rgba(0,0,0,0.8)] relative overflow-hidden">
+                {!videoError ? (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    controls
+                    preload="auto"
+                    className="w-full h-full object-cover"
+                    onLoadedData={() => setVideoReady(true)}
+                    onError={() => setVideoError(true)}
                   >
-                    Open Demo Video
-                  </a>
+                    <source src="/videos/demo.mp4" type="video/mp4" />
+                    <source src="/videos/telegram-token-tutorial.mp4" type="video/mp4" />
+                    <source src="/videos/telegram-token-tutorial.webm" type="video/webm" />
+                    Your browser does not support the video tag.
+                  </video>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center px-6 text-center bg-[#0b0b0d]">
+                    <p className="text-white font-bold mb-3">Video preview failed to load</p>
+                    <a
+                      href="/videos/demo.mp4"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-deploy-gradient px-4 py-2 rounded-lg text-sm font-black uppercase"
+                    >
+                      Open Demo Video
+                    </a>
+                  </div>
+                )}
+                {!videoError && showManualPlay ? (
+                  <button
+                    onClick={handleManualPlay}
+                    className="absolute inset-x-6 bottom-20 btn-deploy-gradient py-3 rounded-xl text-xs font-black uppercase z-20"
+                  >
+                    Play Demo Video
+                  </button>
+                ) : null}
+                <div className="absolute bottom-4 left-4 right-4 bg-black/70 backdrop-blur-sm rounded-xl p-3 z-10">
+                  <p className="text-white text-xs font-bold text-center uppercase tracking-wider">Telegram Setup Demo</p>
                 </div>
-              )}
-              {!videoError && showManualPlay ? (
-                <button
-                  onClick={handleManualPlay}
-                  className="absolute inset-x-6 bottom-20 btn-deploy-gradient py-3 rounded-xl text-xs font-black uppercase z-20"
-                >
-                  Play Demo Video
-                </button>
-              ) : null}
-              <div className="absolute bottom-4 left-4 right-4 bg-black/70 backdrop-blur-sm rounded-xl p-3 z-10">
-                <p className="text-white text-xs font-bold text-center uppercase tracking-wider">Telegram Setup Demo</p>
               </div>
             </div>
-          </div>
+          ) : null}
         </div>
       </div>
 
