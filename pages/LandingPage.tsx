@@ -106,9 +106,8 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             <span className="w-2 h-2 bg-cyan-300 rounded-full animate-pulse"></span>
             One-Click AI Provisioning
           </div>
-          <h1 className="text-5xl md:text-8xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase">
-            Deploy <span className="text-cyan-300">OpenClaw</span> <br />
-            in <span className="text-zinc-400">Under 30 Seconds</span>
+          <h1 className="text-5xl md:text-7xl xl:text-8xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase md:whitespace-nowrap">
+            Deploy <span className="text-cyan-300">OpenClaw</span> in <span className="text-zinc-400">Under 30 Seconds</span>
           </h1>
           <p className="text-lg md:text-xl text-zinc-400 font-medium max-w-3xl mx-auto leading-relaxed italic">
             Eliminate technical setup and instantly launch your own always-on OpenClaw AI instance with a single secure deployment flow.
