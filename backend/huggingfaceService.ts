@@ -1,21 +1,24 @@
 import { HfInference } from '@huggingface/inference';
 
 class HuggingFaceService {
-  private hf: HfInference;
+  private hf: HfInference | null;
   private model: string;
+  private enabled: boolean;
 
   constructor() {
     const apiKey = process.env.HUGGINGFACE_API_KEY || '';
-    if (!apiKey) {
-      throw new Error('HUGGINGFACE_API_KEY is not set in environment variables');
-    }
-    
-    this.hf = new HfInference(apiKey);
-    // Using a model that works with free tier
+    this.enabled = Boolean(apiKey);
+    this.hf = this.enabled ? new HfInference(apiKey) : null;
     this.model = 'microsoft/DialoGPT-medium';
+    if (!this.enabled) {
+      console.warn('[HuggingFaceService] HUGGINGFACE_API_KEY is missing. Using fallback responses.');
+    }
   }
 
   async generateResponse(prompt: string, context: string = ''): Promise<string> {
+    if (!this.enabled || !this.hf) {
+      return "AI fallback active: Hugging Face key is not configured. Please set HUGGINGFACE_API_KEY for full responses.";
+    }
     try {
       // Simple prompt for chat model
       const fullPrompt = context 
@@ -48,6 +51,9 @@ class HuggingFaceService {
   }
 
   async chat(messages: Array<{role: string, content: string}>): Promise<string> {
+    if (!this.enabled || !this.hf) {
+      return "AI fallback active: Hugging Face key is not configured. Please set HUGGINGFACE_API_KEY for full responses.";
+    }
     try {
       // Convert messages to prompt format
       let prompt = '';
