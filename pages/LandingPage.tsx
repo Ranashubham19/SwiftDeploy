@@ -10,7 +10,6 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   const navigate = useNavigate();
   const [selectedModel, setSelectedModel] = useState<string>('gpt-5-2');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>(Platform.TELEGRAM);
-  const [customCoreCycle, setCustomCoreCycle] = useState<'monthly' | 'yearly'>('monthly');
 
   // Only redirect on initial load if user is logged in and not manually navigating to home
   const [hasRedirected, setHasRedirected] = useState(false);
@@ -55,7 +54,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
         <div className="hidden lg:flex items-center gap-10">
           <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="text-sm font-bold text-white uppercase tracking-widest">Home</button>
           <button onClick={() => scrollToSection('features')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Features</button>
-          <button onClick={() => scrollToSection('pricing')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Pricing</button>
+          <button onClick={() => scrollToSection('templates')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Templates</button>
           <button onClick={() => scrollToSection('contact')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Contact</button>
         </div>
 
@@ -410,149 +409,8 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
           </div>
         </div>
 
-        {/* Pricing Section */}
-        <div id="pricing" className="w-full max-w-5xl px-6 mb-40">
-           <div className="text-center mb-20">
-              <h2 className="text-4xl md:text-6xl font-black italic text-white tracking-tighter uppercase mb-4">Operational Tunnels</h2>
-              <p className="text-zinc-500 font-bold italic text-lg">Predictable pricing for global AI distribution.</p>
-           </div>
-
-           <div className="grid md:grid-cols-3 gap-8">
-              <div className="config-card p-10 bg-white/[0.01] border-white/10 flex flex-col relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-7">
-                   <span className="text-[10px] font-black uppercase tracking-widest bg-zinc-700 text-white px-4 py-2 rounded-full">FREE</span>
-                </div>
-                <h3 className="text-3xl font-black italic text-white mb-2 uppercase tracking-tighter">Starter</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">For early teams launching first AI automation channel.</p>
-                <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-6xl font-black text-white italic tracking-tighter">$29</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ mo</span>
-                </div>
-                <p className="text-xs text-zinc-500 font-bold mb-6">India: ₹999 / month</p>
-                <ul className="space-y-4 mb-10 flex-1">
-                  {["1 Production Bot", "Basic AI Memory", "Lead Capture Starter Flow", "Email Support"].map(f => (
-                    <li key={f} className="flex items-center gap-3 text-[12px] font-bold text-zinc-400 italic">
-                      <ICONS.Check className="w-4 h-4 text-zinc-500" /> {f}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  onClick={() => {
-                    if (user) {
-                      navigate('/billing?plan=starter');
-                    } else {
-                      navigate('/login?mode=register');
-                    }
-                  }}
-                  className="w-full py-5 bg-white/10 border border-white/20 text-white font-black rounded-2xl text-base hover:bg-white/15 transition-all uppercase"
-                >
-                  Start Free
-                </button>
-              </div>
-
-              <div className="config-card p-12 bg-blue-600/[0.04] border-blue-500/30 flex flex-col relative overflow-hidden group hover:scale-[1.02] transition-transform">
-                <div className="absolute top-0 right-0 p-8">
-                   <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-4 py-2 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.4)]">AUTHORIZED</span>
-                </div>
-                <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 italic leading-relaxed">For serious growth with advanced automation and CRM memory.</p>
-                <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">$79</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ mo</span>
-                </div>
-                <p className="text-xs text-zinc-500 font-bold mb-6">India: ₹3,499 / month</p>
-                <ul className="space-y-4 mb-12 flex-1">
-                  {["10 Production Bots", "CRM Tags + Lead Scoring", "Template Library Access", "24/7 Priority Support", "Built-in Monetization Controls"].map(f => (
-                    <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-300 italic">
-                      <ICONS.Check className="w-4 h-4 text-blue-500" /> {f}
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-6">Optional 5% success commission on bot-collected revenue</p>
-                <button 
-                  onClick={() => {
-                    if (user) {
-                      navigate('/billing?plan=pro');
-                    } else {
-                      navigate('/login?mode=login');
-                    }
-                  }} 
-                  className="w-full py-6 bg-white text-black font-black italic rounded-3xl text-xl hover:bg-zinc-200 transition-all shadow-xl active:scale-95 uppercase italic"
-                >
-                  Subscribe
-                </button>
-              </div>
-
-              <div className="config-card p-12 bg-emerald-600/[0.04] border-emerald-500/30 flex flex-col relative overflow-hidden group hover:scale-[1.02] transition-transform">
-                <div className="absolute top-0 right-0 p-8">
-                   <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-500 text-black px-4 py-2 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.4)]">ENTERPRISE</span>
-                </div>
-                <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Enterprise</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">For high-scale operations, white-label delivery, and premium infrastructure.</p>
-                <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">$399</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ mo</span>
-                </div>
-                <p className="text-xs text-zinc-500 font-bold mb-6">India: ₹12,999 / month</p>
-                <ul className="space-y-4 mb-12 flex-1">
-                  {["Unlimited Bot Scale Policy", "White-Label & Reseller Mode", "Advanced Workflow Integrations", "Priority Enterprise Queue", "Dedicated Success Channel"].map(f => (
-                    <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-300 italic">
-                      <ICONS.Check className="w-4 h-4 text-emerald-400" /> {f}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  onClick={() => {
-                    if (user) {
-                      navigate('/billing?plan=enterprise');
-                    } else {
-                      navigate('/login?mode=login');
-                    }
-                  }}
-                  className="w-full py-6 bg-emerald-400 text-black font-black italic rounded-3xl text-xl hover:bg-emerald-300 transition-all uppercase"
-                >
-                  Subscribe
-                </button>
-              </div>
-           </div>
-
-           <div className="config-card p-10 bg-white/[0.01] border-white/5 mt-10">
-             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-               <div>
-                 <h3 className="text-3xl font-black italic text-white uppercase tracking-tighter mb-2">Custom Core</h3>
-                 <p className="text-zinc-500 text-sm font-bold italic">Enterprise infrastructure for very large agent fleets.</p>
-               </div>
-               <div className="inline-flex rounded-xl bg-white/5 border border-white/10 p-1">
-                 {(['monthly', 'yearly'] as const).map((cycle) => (
-                   <button
-                     key={cycle}
-                     onClick={() => setCustomCoreCycle(cycle)}
-                     className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest ${customCoreCycle === cycle ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
-                   >
-                     {cycle}
-                   </button>
-                 ))}
-               </div>
-             </div>
-             <div className="mt-6 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-               <div>
-                 <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Starting at</p>
-                 <p className="text-5xl font-black italic text-white tracking-tighter">
-                   {customCoreCycle === 'yearly' ? '$4,999' : '$499'}
-                   <span className="text-zinc-600 text-base font-bold"> / {customCoreCycle === 'yearly' ? 'year' : 'month'}</span>
-                 </p>
-               </div>
-               <button
-                 onClick={() => navigate('/contact')}
-                 className="px-8 py-4 bg-white/5 border border-white/10 text-zinc-300 font-black rounded-2xl hover:text-white hover:border-white/30 transition-all uppercase"
-               >
-                 Contact Enterprise
-               </button>
-             </div>
-           </div>
-        </div>
-
         {/* Footer */}
+
         <footer id="contact" className="w-full max-w-7xl px-6 py-20 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-10">
            <div className="flex flex-col items-center md:items-start">
               <div className="flex items-center gap-3 mb-4">
@@ -600,3 +458,4 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
 };
 
 export default LandingPage;
+

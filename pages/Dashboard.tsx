@@ -13,7 +13,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Tab = 'FLEET' | 'INFRASTRUCTURE' | 'BILLING' | 'SETTINGS';
+type Tab = 'FLEET' | 'INFRASTRUCTURE' | 'SETTINGS';
 type LiveBotItem = {
   botId: string;
   platform: 'TELEGRAM' | 'DISCORD';
@@ -74,11 +74,11 @@ const DashboardContent: React.FC<DashboardProps> = ({ user, bots, setBots, onLog
   const [automationBusyRuleId, setAutomationBusyRuleId] = useState<string | null>(null);
   const [automationSimulation, setAutomationSimulation] = useState('No simulation run yet.');
   const [automationDraft, setAutomationDraft] = useState({
-    name: 'Pricing Intent Fast Reply',
-    description: 'Auto-reply with plan summary and booking CTA.',
+    name: 'Support Intent Fast Reply',
+    description: 'Auto-reply with quick support summary and response CTA.',
     trigger: 'KEYWORD' as AutomationRule['trigger'],
     action: 'AUTO_REPLY' as AutomationRule['action'],
-    keyword: 'pricing',
+    keyword: 'support',
     cooldownSec: 45
   });
   const [opsStatus, setOpsStatus] = useState<{
@@ -373,8 +373,6 @@ const DashboardContent: React.FC<DashboardProps> = ({ user, bots, setBots, onLog
   const campaignHeat = Math.min(100, Math.max(8, Math.round(selectedMessageCount * 2 + selectedResponseCount)));
   const autonomyLevel = Math.max(0, Math.min(100, Math.round((opsStatus?.aiConfigured ? 70 : 20) + (selectedResponseCount > 0 ? 20 : 0) - Math.min(20, selectedErrorRate))));
   const escalationRisk = selectedErrorRate >= 25 ? 'High' : selectedErrorRate >= 10 ? 'Medium' : 'Low';
-  const usageLimit = 1000000;
-  const usagePercent = Math.max(0, Math.min(100, Math.round((selectedTokenUsage / usageLimit) * 100)));
   const monitoringUrl = selectedLiveBot?.monitoringUrl || apiUrl('/ops/live-data');
 
   const renderFleetView = () => (
@@ -529,38 +527,6 @@ const DashboardContent: React.FC<DashboardProps> = ({ user, bots, setBots, onLog
     </div>
   );
 
-  const renderBillingView = () => (
-    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <header className="mb-12">
-        <h2 className="text-6xl font-black tracking-tighter italic text-white mb-2 uppercase leading-none">Signal Billing</h2>
-        <p className="text-zinc-500 font-bold italic">Resource Consumption & Node Allocation</p>
-      </header>
-      <div className="config-card p-12 bg-blue-600/[0.02] border-blue-500/10 mb-10">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
-           <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600 mb-2">Current Subscription</p>
-              <h3 className="text-4xl font-black text-white italic tracking-tighter uppercase">Pro Fleet Node</h3>
-           </div>
-           <button onClick={() => navigate('/billing')} className="bg-white text-black px-10 py-5 rounded-2xl font-black italic uppercase shadow-xl hover:bg-zinc-200 transition-all active:scale-95">
-             Upgrade Subscription
-           </button>
-        </div>
-      </div>
-      <div className="grid md:grid-cols-2 gap-8">
-        <div className="config-card p-10 bg-[#0c0c0e] border-white/5">
-          <p className="text-[10px] font-black uppercase tracking-widest text-zinc-700 mb-6">Signal Usage (This Cycle)</p>
-          <div className="w-full h-3 bg-zinc-900 rounded-full overflow-hidden mb-4">
-             <div className="h-full bg-blue-500 rounded-full" style={{ width: `${usagePercent}%` }}></div>
-          </div>
-          <div className="flex justify-between text-[11px] font-black uppercase tracking-widest">
-             <span className="text-white">{selectedTokenUsage.toLocaleString()} Tokens</span>
-             <span className="text-zinc-600">{usageLimit.toLocaleString()} Limit</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
   return (
     <div className="fixed inset-0 z-[100] flex flex-col md:flex-row bg-[#060a16] overflow-hidden selection:bg-cyan-400/30">
       {/* Sidebar */}
@@ -580,7 +546,6 @@ const DashboardContent: React.FC<DashboardProps> = ({ user, bots, setBots, onLog
           {[
             { id: 'FLEET', label: 'Neural Fleet', icon: <ICONS.Dashboard className="w-5 h-5" /> },
             { id: 'INFRASTRUCTURE', label: 'Infrastructure', icon: <ICONS.Settings className="w-5 h-5" /> },
-            { id: 'BILLING', label: 'Signal Billing', icon: <ICONS.Billing className="w-5 h-5" /> },
             { id: 'SETTINGS', label: 'Settings', icon: <ICONS.Settings className="w-5 h-5" /> }
           ].map(item => (
             <button 
@@ -648,7 +613,6 @@ const DashboardContent: React.FC<DashboardProps> = ({ user, bots, setBots, onLog
         <div className="flex-1 overflow-y-auto p-12 custom-scrollbar relative">
           {activeTab === 'FLEET' && renderFleetView()}
           {activeTab === 'INFRASTRUCTURE' && renderInfrastructureView()}
-          {activeTab === 'BILLING' && renderBillingView()}
           {activeTab === 'SETTINGS' && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                <header className="mb-12">
