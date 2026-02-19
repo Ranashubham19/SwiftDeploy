@@ -7,6 +7,15 @@ enum AIModel {
 
 type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 
+const getSarvamKeys = (): string[] => {
+  const fromList = (process.env.SARVAM_API_KEYS || '')
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean);
+  const single = (process.env.SARVAM_API_KEY || '').trim();
+  return Array.from(new Set([...fromList, ...(single ? [single] : [])]));
+};
+
 const extractHistoryText = (history: ChatHistory): string => {
   if (!history?.length) return '';
   return history
@@ -145,6 +154,57 @@ const callOpenRouter = async (prompt: string, history: ChatHistory, systemInstru
   return text.trim();
 };
 
+const callSarvam = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
+  const keys = getSarvamKeys();
+  if (!keys.length) {
+    throw new Error('SARVAM_API_KEY_MISSING');
+  }
+
+  const model = (process.env.SARVAM_MODEL || 'sarvam-m').trim();
+  const historyText = extractHistoryText(history);
+  const baseUrl = (process.env.SARVAM_BASE_URL || 'https://api.sarvam.ai/v1/chat/completions').trim();
+
+  let lastError: Error | null = null;
+
+  for (const key of keys) {
+    try {
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+            ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.2,
+          max_tokens: 600
+        })
+      });
+
+      const data: any = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = data?.error?.message || data?.message || `Sarvam request failed (${response.status})`;
+        throw new Error(`SARVAM_ERROR: ${message}`);
+      }
+
+      const text = data?.choices?.[0]?.message?.content;
+      if (!text || typeof text !== 'string') {
+        throw new Error('SARVAM_EMPTY_RESPONSE');
+      }
+      return text.trim();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError || new Error('SARVAM_ROUTING_FAILED');
+};
+
 /**
  * Backend Gemini Service for Telegram Bot
  * Compliant with @google/genai version 1.41.0
@@ -167,18 +227,24 @@ export const generateBotResponse = async (
       - Be direct and informative
     `;
 
-    const preferredProvider = (process.env.AI_PROVIDER || 'openrouter').trim().toLowerCase();
-    const providers = preferredProvider === 'anthropic'
-      ? ['anthropic', 'openrouter', 'openai', 'gemini']
+    const hasSarvam = getSarvamKeys().length > 0;
+    const preferredProvider = (process.env.AI_PROVIDER || (hasSarvam ? 'sarvam' : 'openrouter')).trim().toLowerCase();
+    const providers = preferredProvider === 'sarvam'
+      ? ['sarvam', 'openrouter', 'openai', 'anthropic', 'gemini']
+      : preferredProvider === 'anthropic'
+      ? ['anthropic', 'openrouter', 'openai', 'sarvam', 'gemini']
       : preferredProvider === 'gemini'
-        ? ['gemini', 'openrouter', 'openai', 'anthropic']
+        ? ['gemini', 'openrouter', 'openai', 'anthropic', 'sarvam']
         : preferredProvider === 'openai'
-          ? ['openai', 'openrouter', 'anthropic', 'gemini']
-          : ['openrouter', 'openai', 'anthropic', 'gemini'];
+          ? ['openai', 'openrouter', 'anthropic', 'sarvam', 'gemini']
+          : ['openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
 
     let lastError: Error | null = null;
     for (const provider of providers) {
       try {
+        if (provider === 'sarvam') {
+          return await callSarvam(sanitizedPrompt, history, systemInstruction || professionalStyle);
+        }
         if (provider === 'openrouter') {
           return await callOpenRouter(sanitizedPrompt, history, systemInstruction || professionalStyle);
         }
