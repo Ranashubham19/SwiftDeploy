@@ -169,7 +169,16 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
     if (flowStep === 'success') {
       return (
-        <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-10 md:px-10 text-center space-y-6">
+        <div className="space-y-6">
+          <div className="text-center">
+            <h2 className="text-4xl md:text-5xl font-black text-white tracking-tight">Deploy Telegram AI Infrastructure in Under 60 Seconds</h2>
+            <p className="text-zinc-400 mt-3 text-base md:text-lg">
+              Production-grade provisioning, webhook linking, and live bot activation with zero manual server setup.
+            </p>
+            <p className="text-zinc-500 mt-1 text-sm font-semibold">Your Telegram deployment is now active and operational.</p>
+          </div>
+
+          <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-10 md:px-10 text-center space-y-6">
           <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto">
             <ICONS.Check className="w-8 h-8 text-emerald-400" />
           </div>
@@ -211,15 +220,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
           <p className="text-xs text-zinc-500">One time purchase. 10% is charged as processing fees.</p>
 
-          <div className="bg-black/30 border border-white/10 rounded-2xl p-4 space-y-2 text-left">
-            <p className="text-xs uppercase tracking-widest text-zinc-500 font-black">Deployment details</p>
-            <p className="text-zinc-200 text-sm"><span className="text-zinc-500">Bot:</span> {deployedBotName}</p>
-            <p className="text-zinc-200 text-sm"><span className="text-zinc-500">Bot ID:</span> {deployedBotId}</p>
-            {webhookUrl ? (
-              <p className="text-zinc-200 text-sm break-all"><span className="text-zinc-500">Webhook:</span> {webhookUrl}</p>
-            ) : null}
-          </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-[460px] mx-auto pt-1">
             <a
               href="https://t.me/BotFather"
@@ -235,6 +235,11 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             >
               Go to Home
             </button>
+          </div>
+
+          <p className="text-xs text-zinc-500 pt-1">
+            For advanced scaling, dedicated performance tuning, or enterprise onboarding, contact support.
+          </p>
           </div>
         </div>
       );
@@ -318,7 +323,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         </button>
       </div>
 
-      <div className="w-full max-w-[940px] bg-[#091428] border border-white/10 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] flex flex-col md:row overflow-hidden animate-in fade-in zoom-in-95 duration-700 relative">
+      <div className="w-full max-w-[940px] bg-[#050a16] border border-white/10 rounded-[48px] shadow-[0_80px_160px_rgba(0,0,0,0.9)] flex flex-col md:row overflow-hidden animate-in fade-in zoom-in-95 duration-700 relative">
         {isDeploying ? (
           <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-300 px-8 text-center">
             <div className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-8"></div>
