@@ -4,10 +4,29 @@ import { User } from '../types';
 import { apiUrl } from '../utils/api';
 
 type CheckoutStatus = 'idle' | 'success' | 'cancel';
-const BASE_PRICE_USD = 49;
-const DISCOUNT_USD = 10;
-const YEARLY_BASE_PRICE_USD = 499;
-const YEARLY_DISCOUNT_USD = 100;
+type PlanKey = 'starter' | 'pro' | 'enterprise';
+type Provider = 'stripe' | 'razorpay';
+
+const PRICING: Record<PlanKey, { label: string; usd: number; inr: number; points: string[] }> = {
+  starter: {
+    label: 'Starter',
+    usd: 29,
+    inr: 999,
+    points: ['1 Production Bot', 'Basic Memory Context', 'Lead Capture Starter Flow', 'Email Support']
+  },
+  pro: {
+    label: 'Pro',
+    usd: 79,
+    inr: 3499,
+    points: ['10 Production Bots', 'CRM Tags + Lead Scoring', 'Advanced Templates', 'Priority Support']
+  },
+  enterprise: {
+    label: 'Enterprise',
+    usd: 399,
+    inr: 12999,
+    points: ['Unlimited Scale Policy', 'White-Label Mode', 'Custom Workflow Integrations', 'Dedicated Success Channel']
+  }
+};
 
 const Billing: React.FC<{ user: User }> = ({ user }) => {
   const location = useLocation();
@@ -20,11 +39,12 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const [isActivatingPlan, setIsActivatingPlan] = useState(false);
-  const billingCycle = query.get('cycle') === 'yearly' ? 'yearly' : 'monthly';
-  const [applyDiscount, setApplyDiscount] = useState(true);
-  const basePrice = billingCycle === 'yearly' ? YEARLY_BASE_PRICE_USD : BASE_PRICE_USD;
-  const discount = billingCycle === 'yearly' ? YEARLY_DISCOUNT_USD : DISCOUNT_USD;
-  const finalPriceUsd = applyDiscount ? basePrice - discount : basePrice;
+  const initialPlan = (query.get('plan') || 'pro').toLowerCase();
+  const [plan, setPlan] = useState<PlanKey>(
+    initialPlan === 'starter' ? 'starter' : initialPlan === 'enterprise' ? 'enterprise' : 'pro'
+  );
+  const [provider, setProvider] = useState<Provider>('stripe');
+  const selected = PRICING[plan];
 
   React.useEffect(() => {
     if (checkoutStatus !== 'success' || isActivatingPlan) return;
@@ -35,14 +55,14 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ billingCycle })
+          body: JSON.stringify({ tier: plan.toUpperCase() })
         });
       } finally {
         setIsActivatingPlan(false);
       }
     };
     activate();
-  }, [billingCycle, checkoutStatus, isActivatingPlan]);
+  }, [plan, checkoutStatus, isActivatingPlan]);
 
   const handleCheckout = async () => {
     setError('');
@@ -53,10 +73,8 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          plan: 'PRO_FLEET',
-          applyDiscount,
-          billingCycle,
-          paymentMethod: 'card',
+          plan: plan.toUpperCase(),
+          provider,
           billingDetails: {
             fullName: user.name || '',
             email: user.email || ''
@@ -86,34 +104,58 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
           Return to Command Center
         </Link>
 
-        <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight mb-2">Secure Card Checkout</h1>
-        <p className="text-zinc-400 mb-8">Plan: {billingCycle === 'yearly' ? 'Pro Fleet Yearly' : 'Pro Fleet Monthly'}. You will be redirected to Stripe hosted checkout with card payment only.</p>
+        <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight mb-2">Secure Checkout</h1>
+        <p className="text-zinc-400 mb-8">Select plan and payment gateway. Stripe is for international cards (USD). Razorpay is for India payments (INR).</p>
 
-        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-3 mb-6">
-          <div className="flex justify-between text-sm text-zinc-400">
-            <span>Base Price</span>
-            <span>${basePrice.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-300">Discount</span>
-            <span className={applyDiscount ? 'text-emerald-400 font-bold' : 'text-zinc-500'}>- ${discount.toFixed(2)}</span>
-          </div>
-          <div className="h-px bg-white/10" />
-          <div className="flex justify-between text-lg font-black text-white">
-            <span>Total</span>
-            <span>${finalPriceUsd.toFixed(2)}</span>
-          </div>
+        <div className="grid md:grid-cols-3 gap-3 mb-6">
+          {(Object.keys(PRICING) as PlanKey[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => setPlan(k)}
+              className={`rounded-xl border px-4 py-4 text-left transition-all ${plan === k ? 'border-cyan-300 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}
+            >
+              <p className="text-sm font-black text-white uppercase">{PRICING[k].label}</p>
+              <p className="text-xs text-zinc-400 mt-2">${PRICING[k].usd}/month</p>
+              <p className="text-xs text-zinc-500">₹{PRICING[k].inr}/month</p>
+            </button>
+          ))}
         </div>
 
-        <label className="inline-flex items-center gap-3 mb-6 text-zinc-200 font-semibold cursor-pointer">
-          <input
-            type="checkbox"
-            checked={applyDiscount}
-            onChange={(e) => setApplyDiscount(e.target.checked)}
-            className="accent-cyan-400"
-          />
-          {`Apply promotional $${discount.toFixed(0)} discount`}
-        </label>
+        <div className="grid md:grid-cols-2 gap-3 mb-6">
+          <button
+            onClick={() => setProvider('stripe')}
+            className={`rounded-xl border px-4 py-3 text-sm font-black uppercase tracking-wider transition-all ${provider === 'stripe' ? 'border-cyan-300 bg-cyan-400/10 text-white' : 'border-white/10 text-zinc-300'}`}
+          >
+            Stripe (International)
+          </button>
+          <button
+            onClick={() => setProvider('razorpay')}
+            className={`rounded-xl border px-4 py-3 text-sm font-black uppercase tracking-wider transition-all ${provider === 'razorpay' ? 'border-cyan-300 bg-cyan-400/10 text-white' : 'border-white/10 text-zinc-300'}`}
+          >
+            Razorpay (India)
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-3 mb-6">
+          <div className="flex justify-between text-sm text-zinc-300">
+            <span>Selected Plan</span>
+            <span className="font-bold">{selected.label}</span>
+          </div>
+          <div className="flex justify-between text-sm text-zinc-400">
+            <span>USD Price</span>
+            <span>${selected.usd.toFixed(2)} / month</span>
+          </div>
+          <div className="flex justify-between text-sm text-zinc-400">
+            <span>INR Price</span>
+            <span>₹{selected.inr.toLocaleString('en-IN')} / month</span>
+          </div>
+          <div className="h-px bg-white/10" />
+          <ul className="space-y-2">
+            {selected.points.map((item) => (
+              <li key={item} className="text-xs text-zinc-300 font-semibold">• {item}</li>
+            ))}
+          </ul>
+        </div>
 
         {checkoutStatus === 'success' && (
           <div className="mb-4 border border-emerald-500/30 bg-emerald-500/10 rounded-xl px-4 py-3 text-emerald-300 text-sm font-semibold">
@@ -134,7 +176,7 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
           disabled={isProcessing}
           className="w-full py-4 rounded-xl bg-white text-black font-black text-sm hover:bg-zinc-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {isProcessing ? 'Opening Stripe Checkout...' : 'Continue to Card Checkout'}
+          {isProcessing ? 'Opening Secure Checkout...' : `Continue with ${provider === 'stripe' ? 'Stripe' : 'Razorpay'}`}
         </button>
       </div>
     </div>

@@ -423,13 +423,14 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                    <span className="text-[10px] font-black uppercase tracking-widest bg-zinc-700 text-white px-4 py-2 rounded-full">FREE</span>
                 </div>
                 <h3 className="text-3xl font-black italic text-white mb-2 uppercase tracking-tighter">Starter</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Limited trial for testing SwiftDeploy quickly.</p>
+                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">For early teams launching first AI automation channel.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-6xl font-black text-white italic tracking-tighter">₹0</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ free</span>
+                  <span className="text-6xl font-black text-white italic tracking-tighter">$29</span>
+                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ mo</span>
                 </div>
+                <p className="text-xs text-zinc-500 font-bold mb-6">India: ₹999 / month</p>
                 <ul className="space-y-4 mb-10 flex-1">
-                  {["1 Telegram Bot Limit", "Up to 7 Days Trial Window", "Basic Queue Priority", "Community Support", "Upgrade Required After Limit"].map(f => (
+                  {["1 Production Bot", "Basic AI Memory", "Lead Capture Starter Flow", "Email Support"].map(f => (
                     <li key={f} className="flex items-center gap-3 text-[12px] font-bold text-zinc-400 italic">
                       <ICONS.Check className="w-4 h-4 text-zinc-500" /> {f}
                     </li>
@@ -438,7 +439,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <button
                   onClick={() => {
                     if (user) {
-                      navigate('/connect/telegram');
+                      navigate('/billing?plan=starter');
                     } else {
                       navigate('/login?mode=register');
                     }
@@ -454,13 +455,14 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                    <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-4 py-2 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.4)]">AUTHORIZED</span>
                 </div>
                 <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 italic leading-relaxed">Advanced production node billed monthly.</p>
+                <p className="text-zinc-500 text-sm font-bold italic mb-8 italic leading-relaxed">For serious growth with advanced automation and CRM memory.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">₹999</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ month</span>
+                  <span className="text-7xl font-black text-white italic tracking-tighter">$79</span>
+                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ mo</span>
                 </div>
+                <p className="text-xs text-zinc-500 font-bold mb-6">India: ₹3,499 / month</p>
                 <ul className="space-y-4 mb-12 flex-1">
-                  {["10 Production Bots", "Enterprise Memory Nodes", "24/7 Priority Support", "Custom Webhook Tunneling", "Built-in Monetization Controls"].map(f => (
+                  {["10 Production Bots", "CRM Tags + Lead Scoring", "Template Library Access", "24/7 Priority Support", "Built-in Monetization Controls"].map(f => (
                     <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-300 italic">
                       <ICONS.Check className="w-4 h-4 text-blue-500" /> {f}
                     </li>
@@ -470,7 +472,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <button 
                   onClick={() => {
                     if (user) {
-                      navigate('/billing?cycle=monthly');
+                      navigate('/billing?plan=pro');
                     } else {
                       navigate('/login?mode=login');
                     }
@@ -483,16 +485,17 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
 
               <div className="config-card p-12 bg-emerald-600/[0.04] border-emerald-500/30 flex flex-col relative overflow-hidden group hover:scale-[1.02] transition-transform">
                 <div className="absolute top-0 right-0 p-8">
-                   <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-500 text-black px-4 py-2 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.4)]">BEST VALUE</span>
+                   <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-500 text-black px-4 py-2 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.4)]">ENTERPRISE</span>
                 </div>
-                <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet Yearly</h3>
-                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Annual contract with better savings.</p>
+                <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Enterprise</h3>
+                <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">For high-scale operations, white-label delivery, and premium infrastructure.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">₹2,999</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ month equivalent</span>
+                  <span className="text-7xl font-black text-white italic tracking-tighter">$399</span>
+                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ mo</span>
                 </div>
+                <p className="text-xs text-zinc-500 font-bold mb-6">India: ₹12,999 / month</p>
                 <ul className="space-y-4 mb-12 flex-1">
-                  {["Everything in Monthly Pro", "2 Months Price Advantage", "Long-Term Stability Pricing", "Priority Enterprise Queues", "Annual Success Review"].map(f => (
+                  {["Unlimited Bot Scale Policy", "White-Label & Reseller Mode", "Advanced Workflow Integrations", "Priority Enterprise Queue", "Dedicated Success Channel"].map(f => (
                     <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-300 italic">
                       <ICONS.Check className="w-4 h-4 text-emerald-400" /> {f}
                     </li>
@@ -501,7 +504,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <button
                   onClick={() => {
                     if (user) {
-                      navigate('/billing?cycle=yearly');
+                      navigate('/billing?plan=enterprise');
                     } else {
                       navigate('/login?mode=login');
                     }
@@ -535,7 +538,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                <div>
                  <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Starting at</p>
                  <p className="text-5xl font-black italic text-white tracking-tighter">
-                   {customCoreCycle === 'yearly' ? '₹2,40,000' : '₹24,999'}
+                   {customCoreCycle === 'yearly' ? '$4,999' : '$499'}
                    <span className="text-zinc-600 text-base font-bold"> / {customCoreCycle === 'yearly' ? 'year' : 'month'}</span>
                  </p>
                </div>

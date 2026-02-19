@@ -123,6 +123,7 @@ const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const FREE_DEPLOY_LIMIT = 1;
 const FREE_TRIAL_DAYS = 7;
 type PlanType = 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
+type BillingTier = 'STARTER' | 'PRO' | 'ENTERPRISE';
 type SubscriptionState = {
   plan: PlanType;
   isSubscribed: boolean;
@@ -2184,26 +2185,31 @@ app.post('/billing/activate-plan', requireAuth, (req, res) => {
   if (!email) {
     return res.status(401).json({ success: false, message: 'Authentication required' });
   }
-  const billingCycle = req.body?.billingCycle === 'yearly' ? 'yearly' : 'monthly';
-  const plan: PlanType = billingCycle === 'yearly' ? 'PRO_YEARLY' : 'PRO_MONTHLY';
+  const tierRaw = String(req.body?.tier || 'PRO').trim().toUpperCase();
+  const tier: BillingTier = tierRaw === 'STARTER' ? 'STARTER' : tierRaw === 'ENTERPRISE' ? 'ENTERPRISE' : 'PRO';
+  const plan: PlanType = tier === 'STARTER' ? 'PRO_MONTHLY' : tier === 'PRO' ? 'PRO_YEARLY' : 'CUSTOM';
   const updated = setUserPlan(email, plan);
-  return res.json({ success: true, plan: updated.plan, isSubscribed: updated.isSubscribed });
+  return res.json({ success: true, plan: updated.plan, tier, isSubscribed: updated.isSubscribed });
 });
 
 app.post('/billing/create-checkout-session', requireAuth, billingRateLimit, async (req, res) => {
-  const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
-  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
-    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
+  const plan = String(req.body?.plan || '').trim().toUpperCase();
+  let tier: BillingTier | null = null;
+  if (plan === 'STARTER' || plan === 'PRO' || plan === 'ENTERPRISE') {
+    tier = plan;
   }
-
-  const plan = typeof req.body?.plan === 'string' ? req.body.plan.trim().toUpperCase() : '';
-  if (plan !== 'PRO_FLEET') {
+  if (!tier) {
     return res.status(400).json({ success: false, message: 'Invalid billing plan selected.' });
   }
-  const applyDiscount = req.body?.applyDiscount !== false;
-  const billingCycle = req.body?.billingCycle === 'yearly' ? 'yearly' : 'monthly';
-  const paymentMethod = 'card';
-  const cardScope = 'international';
+
+  const providerRaw = String(req.body?.provider || req.body?.paymentProvider || 'stripe').trim().toLowerCase();
+  const provider: 'stripe' | 'razorpay' = providerRaw === 'razorpay' ? 'razorpay' : 'stripe';
+
+  const tierPricing = {
+    STARTER: { usdCents: 2900, inrPaise: 99900 },
+    PRO: { usdCents: 7900, inrPaise: 349900 },
+    ENTERPRISE: { usdCents: 39900, inrPaise: 1299900 }
+  } as const;
 
   const billingDetails = req.body?.billingDetails ?? {};
   const fullName = typeof billingDetails.fullName === 'string' ? billingDetails.fullName.trim() : '';
@@ -2233,77 +2239,96 @@ app.post('/billing/create-checkout-session', requireAuth, billingRateLimit, asyn
   }
 
   const frontUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  const successUrl = `${frontUrl}/#/billing?cycle=${billingCycle}&checkout=success`;
-  const cancelUrl = `${frontUrl}/#/billing?cycle=${billingCycle}&checkout=cancel`;
-  const discountedPriceId = billingCycle === 'yearly'
-    ? (process.env.STRIPE_PRICE_PRO_FLEET_YEARLY_DISCOUNTED || process.env.STRIPE_PRICE_PRO_FLEET_YEARLY || '').trim()
-    : (process.env.STRIPE_PRICE_PRO_FLEET_DISCOUNTED || process.env.STRIPE_PRICE_PRO_FLEET || '').trim();
-  const basePriceId = billingCycle === 'yearly'
-    ? (process.env.STRIPE_PRICE_PRO_FLEET_YEARLY_BASE || '').trim()
-    : (process.env.STRIPE_PRICE_PRO_FLEET_BASE || '').trim();
-  const baseAmountCents = billingCycle === 'yearly' ? 49900 : 4900;
-  const finalAmountCents = applyDiscount ? (billingCycle === 'yearly' ? 39900 : 3900) : baseAmountCents;
-  const mode = 'subscription';
-
-  const params = new URLSearchParams();
-  params.set('mode', mode);
-  params.set('success_url', successUrl);
-  params.set('cancel_url', cancelUrl);
-  params.set('billing_address_collection', 'required');
-  params.set('customer_email', email);
-  params.set('client_reference_id', reqUser?.id || randomUUID());
-  params.set('metadata[plan]', 'PRO_FLEET');
-  params.set('metadata[user_email]', email);
-  params.set('metadata[user_name]', fullName || reqUser?.name || '');
-  params.set('metadata[payment_method]', paymentMethod);
-  params.set('metadata[card_scope]', cardScope);
-  params.set('metadata[billing_cycle]', billingCycle);
-  params.set('metadata[city]', city);
-  params.set('metadata[country]', country);
-  params.set('metadata[address_line1]', addressLine1);
-  params.set('metadata[postal_code]', postalCode);
-  params.set('metadata[base_price_cents]', String(baseAmountCents));
-  params.set('metadata[discount_cents]', String(baseAmountCents - finalAmountCents));
-  params.set('metadata[final_price_cents]', String(finalAmountCents));
-
-  params.set('payment_method_types[0]', 'card');
-  if (applyDiscount && discountedPriceId) {
-    params.set('line_items[0][price]', discountedPriceId);
-    params.set('line_items[0][quantity]', '1');
-  } else if (!applyDiscount && basePriceId) {
-    params.set('line_items[0][price]', basePriceId);
-    params.set('line_items[0][quantity]', '1');
-  } else {
-    params.set('line_items[0][price_data][currency]', 'usd');
-    params.set('line_items[0][price_data][recurring][interval]', billingCycle === 'yearly' ? 'year' : 'month');
-    params.set('line_items[0][price_data][unit_amount]', String(finalAmountCents));
-    params.set('line_items[0][price_data][product_data][name]', `SwiftDeploy Pro Fleet (${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'})`);
-    params.set('line_items[0][quantity]', '1');
-  }
+  const successUrl = `${frontUrl}/#/billing?plan=${tier.toLowerCase()}&checkout=success`;
+  const cancelUrl = `${frontUrl}/#/billing?plan=${tier.toLowerCase()}&checkout=cancel`;
 
   try {
-    const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeSecretKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': randomUUID()
-      },
-      body: params.toString()
-    });
+    if (provider === 'stripe') {
+      const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
+      if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
+        return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
+      }
 
-    const stripeData: any = await stripeResponse.json();
-    if (!stripeResponse.ok || !stripeData?.url) {
-      const description = stripeData?.error?.message || 'Unable to create Stripe checkout session.';
-      return res.status(502).json({ success: false, message: description });
+      const params = new URLSearchParams();
+      params.set('mode', 'subscription');
+      params.set('success_url', successUrl);
+      params.set('cancel_url', cancelUrl);
+      params.set('customer_email', email);
+      params.set('billing_address_collection', 'required');
+      params.set('payment_method_types[0]', 'card');
+      params.set('client_reference_id', reqUser?.id || randomUUID());
+      params.set('metadata[plan]', tier);
+      params.set('metadata[provider]', 'stripe');
+      params.set('metadata[user_email]', email);
+      params.set('line_items[0][price_data][currency]', 'usd');
+      params.set('line_items[0][price_data][recurring][interval]', 'month');
+      params.set('line_items[0][price_data][unit_amount]', String(tierPricing[tier].usdCents));
+      params.set('line_items[0][price_data][product_data][name]', `SwiftDeploy ${tier} Plan`);
+      params.set('line_items[0][quantity]', '1');
+
+      const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${stripeSecretKey}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Idempotency-Key': randomUUID()
+        },
+        body: params.toString()
+      });
+      const stripeData: any = await stripeResponse.json().catch(() => ({}));
+      if (!stripeResponse.ok || !stripeData?.url) {
+        return res.status(502).json({ success: false, message: stripeData?.error?.message || 'Unable to create Stripe checkout session.' });
+      }
+      return res.json({ success: true, provider: 'stripe', checkoutUrl: stripeData.url, sessionId: stripeData.id });
     }
 
+    const razorpayKeyId = (process.env.RAZORPAY_KEY_ID || '').trim();
+    const razorpayKeySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+    if (!razorpayKeyId || !razorpayKeySecret) {
+      return res.status(500).json({ success: false, message: 'Razorpay is not configured on the server.' });
+    }
+
+    const auth = Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
+    const payload = {
+      amount: tierPricing[tier].inrPaise,
+      currency: 'INR',
+      accept_partial: false,
+      description: `SwiftDeploy ${tier} Plan (Monthly)`,
+      customer: {
+        name: fullName || reqUser?.name || 'SwiftDeploy User',
+        email
+      },
+      notify: { sms: false, email: true },
+      reminder_enable: true,
+      callback_url: successUrl,
+      callback_method: 'get',
+      notes: {
+        plan: tier,
+        provider: 'razorpay',
+        country,
+        city
+      }
+    };
+
+    const razorpayResponse = await fetch('https://api.razorpay.com/v1/payment_links', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    const razorpayData: any = await razorpayResponse.json().catch(() => ({}));
+    if (!razorpayResponse.ok || !razorpayData?.short_url) {
+      return res.status(502).json({ success: false, message: razorpayData?.error?.description || 'Unable to create Razorpay payment link.' });
+    }
     return res.json({
       success: true,
-      checkoutUrl: stripeData.url,
-      sessionId: stripeData.id
+      provider: 'razorpay',
+      checkoutUrl: razorpayData.short_url,
+      sessionId: razorpayData.id
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({
       success: false,
       message: 'Failed to initialize secure checkout.'
