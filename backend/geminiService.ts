@@ -13,7 +13,24 @@ const getSarvamKeys = (): string[] => {
     .map((k) => k.trim())
     .filter(Boolean);
   const single = (process.env.SARVAM_API_KEY || '').trim();
-  return Array.from(new Set([...fromList, ...(single ? [single] : [])]));
+  const aliases = [
+    (process.env.SARVAM_API_KEY_1 || '').trim(),
+    (process.env.SARVAM_API_KEY_2 || '').trim(),
+    (process.env.SARVAM_API_KEY_3 || '').trim(),
+    // Backward-compat for accidentally named Railway vars
+    (process.env['API_KEY 1'] || '').trim(),
+    (process.env['API_KEY 2'] || '').trim(),
+    (process.env['API_KEY 3'] || '').trim()
+  ].filter(Boolean);
+  return Array.from(new Set([...fromList, ...(single ? [single] : []), ...aliases]));
+};
+
+const getGeminiApiKey = (): string => {
+  const raw = (process.env.API_KEY || '').trim();
+  if (!raw) return '';
+  // Guard against non-Gemini keys accidentally placed in API_KEY (e.g. sk_...).
+  if (!raw.startsWith('AIza')) return '';
+  return raw;
 };
 
 const extractHistoryText = (history: ChatHistory): string => {
@@ -262,7 +279,7 @@ export const generateBotResponse = async (
           return await callAnthropic(sanitizedPrompt, history, systemInstruction || professionalStyle);
         }
 
-        const geminiKey = (process.env.API_KEY || '').trim();
+        const geminiKey = getGeminiApiKey();
         if (!geminiKey) {
           throw new Error("NEURAL_LINK_FAILED: API_KEY_MISSING");
         }
