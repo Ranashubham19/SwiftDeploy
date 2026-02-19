@@ -171,6 +171,9 @@ const callSarvam = async (prompt: string, history: ChatHistory, systemInstructio
       const response = await fetch(baseUrl, {
         method: 'POST',
         headers: {
+          // Sarvam docs use `api-subscription-key` for auth.
+          // Keep Authorization as secondary compatibility header.
+          'api-subscription-key': key,
           Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json'
         },
@@ -192,7 +195,11 @@ const callSarvam = async (prompt: string, history: ChatHistory, systemInstructio
         throw new Error(`SARVAM_ERROR: ${message}`);
       }
 
-      const text = data?.choices?.[0]?.message?.content;
+      const text =
+        data?.choices?.[0]?.message?.content
+        || data?.choices?.[0]?.text
+        || data?.output_text
+        || data?.response;
       if (!text || typeof text !== 'string') {
         throw new Error('SARVAM_EMPTY_RESPONSE');
       }
