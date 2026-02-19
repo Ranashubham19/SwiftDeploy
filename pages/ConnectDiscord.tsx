@@ -129,7 +129,7 @@ const ConnectDiscord: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ us
       if (result.inviteUrl) {
         window.open(result.inviteUrl, '_blank', 'noopener,noreferrer');
       }
-      navigate('/dashboard');
+      navigate('/');
     } catch (error: any) {
       alert(`Deployment failed: ${error?.message || 'Unable to connect to backend.'}`);
     } finally {

@@ -99,9 +99,9 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
   return (
     <div className="min-h-screen bg-[#050a16]/90 p-6 md:p-16 flex items-center justify-center">
       <div className="max-w-2xl w-full rounded-3xl border border-white/10 bg-black/60 p-8 md:p-10">
-        <Link to="/dashboard" className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500 hover:text-white flex items-center gap-3 mb-8 transition-all group">
+        <Link to="/" className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500 hover:text-white flex items-center gap-3 mb-8 transition-all group">
           <svg className="w-4 h-4 group-hover:-translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-          Return to Command Center
+          Return to Home
         </Link>
 
         <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight mb-2">Secure Checkout</h1>

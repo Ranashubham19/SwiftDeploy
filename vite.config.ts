@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
           output: {
             manualChunks: {
               'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-              'ui-components': ['./pages/LandingPage.tsx', './pages/Dashboard.tsx']
+              'ui-components': ['./pages/LandingPage.tsx', './pages/ConnectTelegram.tsx', './pages/ConnectDiscord.tsx']
             }
           }
         },
