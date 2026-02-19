@@ -6,7 +6,7 @@ COPY backend/package*.json ./backend/
 RUN npm ci --prefix backend
 
 # Build backend TypeScript.
-COPY backend ./backend
+COPY backend/. ./backend/
 RUN npm run build --prefix backend
 RUN npm prune --omit=dev --prefix backend
 

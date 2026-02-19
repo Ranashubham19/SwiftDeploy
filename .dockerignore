@@ -1,0 +1,13 @@
+.git
+.gitignore
+.qoder
+node_modules
+dist
+backend/node_modules
+backend/dist
+*.log
+logs
+.env
+.env.local
+.env.production
+backend/.env
