@@ -8,6 +8,9 @@ enum AIModel {
 type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 
 const MAX_HISTORY_TURNS = 8;
+const WEB_TIMEOUT_MS = 3500;
+const WEB_MAX_SNIPPETS = 5;
+const WEB_MAX_CHARS = 2500;
 
 const getSarvamKeys = (): string[] => {
   const fromList = (process.env.SARVAM_API_KEYS || '')
@@ -82,6 +85,79 @@ const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): s
     ${temporalHint}
     ${customInstruction || ''}
   `;
+};
+
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  return await Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs))
+  ]);
+};
+
+const stripHtml = (input: string): string => {
+  return input
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const fetchDuckDuckGoContext = async (query: string): Promise<string[]> => {
+  const encoded = encodeURIComponent(query);
+  const url = `https://duckduckgo.com/html/?q=${encoded}`;
+  const response = await withTimeout(fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; SwiftDeployBot/1.0)'
+    }
+  }), WEB_TIMEOUT_MS);
+  if (!response.ok) return [];
+  const html = await response.text();
+  const matches = html.match(/<a[^>]*class="result__a"[^>]*>[\s\S]*?<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>[\s\S]*?<\/a>/g) || [];
+  const snippets: string[] = [];
+  for (const block of matches.slice(0, WEB_MAX_SNIPPETS)) {
+    const titleMatch = block.match(/<a[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/);
+    const snippetMatch = block.match(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/);
+    const title = stripHtml(titleMatch?.[1] || '');
+    const snippet = stripHtml(snippetMatch?.[1] || '');
+    if (title || snippet) snippets.push(`${title}: ${snippet}`.trim());
+  }
+  return snippets;
+};
+
+const fetchWikipediaContext = async (query: string): Promise<string[]> => {
+  const encoded = encodeURIComponent(query);
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&utf8=1&format=json&srlimit=${WEB_MAX_SNIPPETS}`;
+  const response = await withTimeout(fetch(url), WEB_TIMEOUT_MS);
+  if (!response.ok) return [];
+  const data: any = await response.json().catch(() => ({}));
+  const results = Array.isArray(data?.query?.search) ? data.query.search : [];
+  return results
+    .slice(0, WEB_MAX_SNIPPETS)
+    .map((r: any) => `${stripHtml(r?.title || '')}: ${stripHtml(r?.snippet || '')}`)
+    .filter((x: string) => Boolean(x));
+};
+
+const buildWebGrounding = async (prompt: string): Promise<string> => {
+  const enabled = (process.env.LIVE_GROUNDING_ENABLED || 'true').toLowerCase() !== 'false';
+  if (!enabled || !isTemporalQuery(prompt)) return '';
+
+  try {
+    const [duck, wiki] = await Promise.all([
+      fetchDuckDuckGoContext(prompt).catch(() => []),
+      fetchWikipediaContext(prompt).catch(() => [])
+    ]);
+    const merged = Array.from(new Set([...duck, ...wiki])).slice(0, WEB_MAX_SNIPPETS);
+    if (!merged.length) return '';
+    const nowIso = new Date().toISOString();
+    const body = merged.join('\n- ');
+    return `\nLive context retrieved at ${nowIso}:\n- ${body}`.slice(0, WEB_MAX_CHARS);
+  } catch {
+    return '';
+  }
 };
 
 const getProviderOrder = (preferredProvider: string, prompt: string): string[] => {
@@ -345,6 +421,10 @@ export const generateBotResponse = async (
     const sanitizedPrompt = prompt.trim();
     const compactHistory = trimHistory(history);
     const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
+    const liveGrounding = await buildWebGrounding(sanitizedPrompt);
+    const groundedPrompt = liveGrounding
+      ? `${sanitizedPrompt}\n\nUse this fresh web context when relevant and mention uncertainty when sources conflict.${liveGrounding}`
+      : sanitizedPrompt;
 
     const hasSarvam = getSarvamKeys().length > 0;
     const hasMoonshot = Boolean((process.env.MOONSHOT_API_KEY || '').trim());
@@ -360,19 +440,19 @@ export const generateBotResponse = async (
     for (const provider of providers) {
       try {
         if (provider === 'sarvam') {
-          return await callSarvam(sanitizedPrompt, compactHistory, adaptiveInstruction);
+          return await callSarvam(groundedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'openrouter') {
-          return await callOpenRouter(sanitizedPrompt, compactHistory, adaptiveInstruction);
+          return await callOpenRouter(groundedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'moonshot') {
-          return await callMoonshot(sanitizedPrompt, compactHistory, adaptiveInstruction);
+          return await callMoonshot(groundedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'openai') {
-          return await callOpenAI(sanitizedPrompt, compactHistory, adaptiveInstruction);
+          return await callOpenAI(groundedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'anthropic') {
-          return await callAnthropic(sanitizedPrompt, compactHistory, adaptiveInstruction);
+          return await callAnthropic(groundedPrompt, compactHistory, adaptiveInstruction);
         }
 
         const geminiKey = getGeminiApiKey();
@@ -385,7 +465,7 @@ export const generateBotResponse = async (
           model: modelName,
           contents: [
             ...compactHistory,
-            { role: 'user', parts: [{ text: sanitizedPrompt }] }
+            { role: 'user', parts: [{ text: groundedPrompt }] }
           ],
           config: {
             systemInstruction: adaptiveInstruction,
