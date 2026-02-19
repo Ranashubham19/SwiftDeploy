@@ -277,7 +277,7 @@ export const generateBotResponse = async (
 
         const geminiKey = getGeminiApiKey();
         if (!geminiKey) {
-          throw new Error("NEURAL_LINK_FAILED: API_KEY_MISSING");
+          throw new Error("NEURAL_LINK_FAILED: GEMINI_KEY_MISSING");
         }
         const ai = new GoogleGenAI({ apiKey: geminiKey });
         const modelName = model === AIModel.GEMINI_3_FLASH ? 'gemini-3-flash-preview' : 'gemini-3-pro-preview';
@@ -307,8 +307,8 @@ export const generateBotResponse = async (
     
     // Enhanced error handling with specific error types
     if (error instanceof Error) {
-      if (error.message.includes('API_KEY') || error.message.includes('OPENROUTER')) {
-        throw new Error("INVALID_API_KEY: Please check your AI provider API configuration");
+      if (error.message.includes('GEMINI_KEY') || error.message.includes('OPENROUTER')) {
+        throw new Error("INVALID_PROVIDER_KEY: Please check your AI provider API configuration");
       } else if (error.message.includes('quota') || error.message.includes('rate')) {
         throw new Error("RATE_LIMIT_EXCEEDED: Please try again in a few moments");
       } else if (error.message.includes('network') || error.message.includes('fetch')) {

@@ -17,7 +17,7 @@ export const generateBotResponse = async (
     viteEnv?.VITE_GEMINI_API_KEY ||
     (typeof process !== 'undefined' ? (process as any).env?.GEMINI_API_KEY : undefined);
   if (!apiKey) {
-    throw new Error("NEURAL_LINK_FAILED: API_KEY_MISSING");
+    throw new Error("NEURAL_LINK_FAILED: GEMINI_KEY_MISSING");
   }
 
   try {
@@ -59,8 +59,8 @@ export const generateBotResponse = async (
     
     // Enhanced error handling with specific error types
     if (error instanceof Error) {
-      if (error.message.includes('API_KEY')) {
-        throw new Error("INVALID_API_KEY: Please check your Gemini API configuration");
+      if (error.message.includes('GEMINI_KEY')) {
+        throw new Error("INVALID_PROVIDER_KEY: Please check your Gemini API configuration");
       } else if (error.message.includes('quota') || error.message.includes('rate')) {
         throw new Error("RATE_LIMIT_EXCEEDED: Please try again in a few moments");
       } else if (error.message.includes('network') || error.message.includes('fetch')) {
