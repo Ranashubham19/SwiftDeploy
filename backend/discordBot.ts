@@ -28,7 +28,7 @@ for (const candidate of envCandidates) {
 const DISCORD_TOKEN = (process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN || '').trim();
 const DISCORD_CLIENT_ID = (process.env.DISCORD_CLIENT_ID || process.env.DISCORD_APPLICATION_ID || '').trim();
 const DISCORD_GUILD_ID = (process.env.DISCORD_GUILD_ID || '').trim();
-const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || process.env.API_KEY || '').trim();
+const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
 const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3-flash-preview').trim();
 
 const log = (...args: unknown[]) => console.log('[DISCORD_BOT]', ...args);
@@ -43,7 +43,7 @@ if (!DISCORD_CLIENT_ID) {
   process.exit(1);
 }
 if (!GEMINI_API_KEY) {
-  logErr('GEMINI_API_KEY (or API_KEY) is missing. Set your Gemini key in env.');
+  logErr('GEMINI_API_KEY is missing. Set your Gemini key in env.');
   process.exit(1);
 }
 

@@ -15,8 +15,7 @@ export const generateBotResponse = async (
   const viteEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
   const apiKey =
     viteEnv?.VITE_GEMINI_API_KEY ||
-    viteEnv?.VITE_API_KEY ||
-    (typeof process !== 'undefined' ? (process as any).env?.API_KEY : undefined);
+    (typeof process !== 'undefined' ? (process as any).env?.GEMINI_API_KEY : undefined);
   if (!apiKey) {
     throw new Error("NEURAL_LINK_FAILED: API_KEY_MISSING");
   }

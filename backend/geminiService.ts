@@ -16,19 +16,15 @@ const getSarvamKeys = (): string[] => {
   const aliases = [
     (process.env.SARVAM_API_KEY_1 || '').trim(),
     (process.env.SARVAM_API_KEY_2 || '').trim(),
-    (process.env.SARVAM_API_KEY_3 || '').trim(),
-    // Backward-compat for accidentally named Railway vars
-    (process.env['API_KEY 1'] || '').trim(),
-    (process.env['API_KEY 2'] || '').trim(),
-    (process.env['API_KEY 3'] || '').trim()
+    (process.env.SARVAM_API_KEY_3 || '').trim()
   ].filter(Boolean);
   return Array.from(new Set([...fromList, ...(single ? [single] : []), ...aliases]));
 };
 
 const getGeminiApiKey = (): string => {
-  const raw = (process.env.API_KEY || '').trim();
+  const raw = (process.env.GEMINI_API_KEY || '').trim();
   if (!raw) return '';
-  // Guard against non-Gemini keys accidentally placed in API_KEY (e.g. sk_...).
+  // Guard against non-Gemini keys accidentally placed in GEMINI_API_KEY (e.g. sk_...).
   if (!raw.startsWith('AIza')) return '';
   return raw;
 };

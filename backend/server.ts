@@ -325,7 +325,6 @@ if (missingEnvVars.length > 0) {
 
 // Type-safe environment variable access with fallbacks for local development
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'placeholder_token';
-const API_KEY = process.env.API_KEY || 'placeholder_api_key';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'placeholder_client_id';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'placeholder_client_secret';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'very_long_random_session_secret_for_dev_testing_only';
@@ -2247,7 +2246,7 @@ setTimeout(() => {
   console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
   console.log('BOT_STATE_FILE:', BOT_STATE_FILE);
   console.log('TELEGRAM_BOT_TOKEN exists:', !!process.env.TELEGRAM_BOT_TOKEN);
-  console.log('API_KEY exists:', !!process.env.API_KEY);
+  console.log('GEMINI_API_KEY exists:', !!process.env.GEMINI_API_KEY);
   console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
   console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
   console.log('SMTP_USER exists:', !!process.env.SMTP_USER);

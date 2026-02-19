@@ -23,7 +23,6 @@ AI_PROVIDER = { required = false, description = "Primary AI provider (sarvam/ope
 SARVAM_API_KEYS = { required = false, description = "Comma-separated Sarvam API keys for primary routing" }
 SARVAM_MODEL = { required = false, description = "Sarvam model identifier (default: sarvam-m)" }
 SARVAM_BASE_URL = { required = false, description = "Sarvam chat completions endpoint URL" }
-API_KEY = { required = false, description = "Gemini API key (optional fallback)" }
 
 [deploy]
 startCommand = "node --import ./backend/env-preload.mjs backend/dist/server.js"
