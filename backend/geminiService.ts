@@ -303,7 +303,12 @@ export const generateBotResponse = async (
     const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
 
     const hasSarvam = getSarvamKeys().length > 0;
-    const preferredProvider = (process.env.AI_PROVIDER || (hasSarvam ? 'sarvam' : 'openrouter')).trim().toLowerCase();
+    const hasOpenAI = Boolean((process.env.OPENAI_API_KEY || '').trim());
+    const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
+    const explicitProvider = (process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const preferredProvider =
+      explicitProvider
+      || (hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
     const providers = getProviderOrder(preferredProvider, sanitizedPrompt);
 
     let lastError: Error | null = null;
