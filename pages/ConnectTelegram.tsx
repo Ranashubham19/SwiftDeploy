@@ -169,15 +169,49 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
     if (flowStep === 'success') {
       return (
-        <div className="space-y-6">
-          <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
-            <ICONS.Check className="w-7 h-7 text-emerald-400" />
+        <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-10 md:px-10 text-center space-y-6">
+          <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto">
+            <ICONS.Check className="w-8 h-8 text-emerald-400" />
           </div>
+
           <div>
-            <h2 className="text-3xl font-black text-white tracking-tight">Deployment success!</h2>
-            <p className="text-zinc-400 mt-2">Your bot is live. You can now chat from Telegram.</p>
+            <h2 className="text-4xl font-black text-white tracking-tight">Deployment success!</h2>
+            <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
+              Your bot is live. Use your Telegram to chat; usage and credits are below.
+            </p>
           </div>
-          <div className="bg-black/30 border border-white/10 rounded-2xl p-4 space-y-2">
+
+          <div className="pt-2">
+            <p className="text-6xl font-black text-white leading-none">$10</p>
+            <p className="text-zinc-400 mt-1 font-semibold">Remaining credits</p>
+          </div>
+
+          <div className="text-sm text-zinc-500 font-semibold">
+            $0 used today
+            <span className="mx-2">•</span>
+            $0 used this month
+            <span className="mx-2">•</span>
+            $10 per month plan
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 max-w-[460px] mx-auto">
+            <input
+              type="text"
+              readOnly
+              value="$ 10"
+              className="bg-[#141416] border border-white/10 rounded-xl px-4 py-3 text-zinc-300 font-bold focus:outline-none"
+            />
+            <button
+              type="button"
+              className="bg-zinc-100 text-black hover:bg-white rounded-xl px-5 py-3 font-black uppercase text-xs tracking-wider transition-colors"
+            >
+              Purchase credit →
+            </button>
+          </div>
+
+          <p className="text-xs text-zinc-500">One time purchase. 10% is charged as processing fees.</p>
+
+          <div className="bg-black/30 border border-white/10 rounded-2xl p-4 space-y-2 text-left">
             <p className="text-xs uppercase tracking-widest text-zinc-500 font-black">Deployment details</p>
             <p className="text-zinc-200 text-sm"><span className="text-zinc-500">Bot:</span> {deployedBotName}</p>
             <p className="text-zinc-200 text-sm"><span className="text-zinc-500">Bot ID:</span> {deployedBotId}</p>
@@ -185,7 +219,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
               <p className="text-zinc-200 text-sm break-all"><span className="text-zinc-500">Webhook:</span> {webhookUrl}</p>
             ) : null}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-[460px] mx-auto pt-1">
             <a
               href="https://t.me/BotFather"
               target="_blank"
