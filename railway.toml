@@ -1,18 +1,8 @@
 # Railway configuration file
 
 [build]
-builder = "NIXPACKS"
-
-[build.nixpacks]
-phases = {
-  "install": {
-    "cmds": ["npm install", "cd backend && npm install"]
-  },
-  "build": {
-    "cmds": ["cd backend && npm run build"]
-  }
-}
-artifacts = ["backend/dist"]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [variables]
 TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @BotFather" }
