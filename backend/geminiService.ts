@@ -7,6 +7,8 @@ enum AIModel {
 
 type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 
+const MAX_HISTORY_TURNS = 8;
+
 const getSarvamKeys = (): string[] => {
   const fromList = (process.env.SARVAM_API_KEYS || '')
     .split(',')
@@ -39,6 +41,66 @@ const extractHistoryText = (history: ChatHistory): string => {
     })
     .filter(Boolean)
     .join('\n');
+};
+
+const trimHistory = (history: ChatHistory): ChatHistory => {
+  if (!Array.isArray(history) || history.length <= MAX_HISTORY_TURNS) return history;
+  return history.slice(-MAX_HISTORY_TURNS);
+};
+
+const isTemporalQuery = (text: string): boolean => {
+  const q = text.toLowerCase();
+  return /(latest|today|current|recent|now|this year|202[4-9]|forecast|estimate|prediction|market|price|revenue|gdp|election|news)/.test(q);
+};
+
+const isReasoningHeavyQuery = (text: string): boolean => {
+  const q = text.toLowerCase();
+  return /(why|how|compare|tradeoff|strategy|architecture|math|calculate|proof|optimi[sz]e|plan|roadmap|estimate)/.test(q);
+};
+
+const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): string => {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const temporalHint = isTemporalQuery(prompt)
+    ? `
+      Temporal accuracy rules:
+      - Treat today's date as ${today}.
+      - If the user asks about 2026 (or another year), do NOT substitute 2023/2024.
+      - If real-time verification is required and unavailable, explicitly say so and provide a best-effort estimate with assumptions.
+      - Never present uncertain facts as certain.
+    `
+    : '';
+
+  return `
+    You are SwiftDeploy AI, a high-accuracy assistant for production bot users.
+    Core response rules:
+    - Give direct, correct, and practical answers.
+    - Show key assumptions before conclusions for estimates.
+    - Prefer structured answers with short bullets and clear numbers.
+    - If confidence is low, say what is unknown and what data is needed.
+    - Keep output concise but complete.
+    ${temporalHint}
+    ${customInstruction || ''}
+  `;
+};
+
+const getProviderOrder = (preferredProvider: string, prompt: string): string[] => {
+  const temporal = isTemporalQuery(prompt);
+  const reasoningHeavy = isReasoningHeavyQuery(prompt);
+
+  if (temporal || reasoningHeavy) {
+    if (preferredProvider === 'openai') return ['openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
+    if (preferredProvider === 'anthropic') return ['anthropic', 'openai', 'openrouter', 'sarvam', 'gemini'];
+    if (preferredProvider === 'gemini') return ['gemini', 'openai', 'anthropic', 'openrouter', 'sarvam'];
+    if (preferredProvider === 'sarvam') return ['openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
+    return ['openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
+  }
+
+  if (preferredProvider === 'sarvam') return ['sarvam', 'openrouter', 'openai', 'anthropic', 'gemini'];
+  if (preferredProvider === 'anthropic') return ['anthropic', 'openrouter', 'openai', 'sarvam', 'gemini'];
+  if (preferredProvider === 'gemini') return ['gemini', 'openrouter', 'openai', 'anthropic', 'sarvam'];
+  if (preferredProvider === 'openai') return ['openai', 'openrouter', 'anthropic', 'sarvam', 'gemini'];
+  return ['openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
 };
 
 const callOpenAI = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
@@ -237,42 +299,27 @@ export const generateBotResponse = async (
 ): Promise<string> => {
   try {
     const sanitizedPrompt = prompt.trim();
-
-    // Professional AI writing style instructions
-    const professionalStyle = `
-      You are SwiftDeploy AI, a helpful assistant. 
-      Provide clear, concise, and accurate responses.
-      - Keep responses professional and helpful
-      - Use clear formatting
-      - Be direct and informative
-    `;
+    const compactHistory = trimHistory(history);
+    const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
 
     const hasSarvam = getSarvamKeys().length > 0;
     const preferredProvider = (process.env.AI_PROVIDER || (hasSarvam ? 'sarvam' : 'openrouter')).trim().toLowerCase();
-    const providers = preferredProvider === 'sarvam'
-      ? ['sarvam', 'openrouter', 'openai', 'anthropic', 'gemini']
-      : preferredProvider === 'anthropic'
-      ? ['anthropic', 'openrouter', 'openai', 'sarvam', 'gemini']
-      : preferredProvider === 'gemini'
-        ? ['gemini', 'openrouter', 'openai', 'anthropic', 'sarvam']
-        : preferredProvider === 'openai'
-          ? ['openai', 'openrouter', 'anthropic', 'sarvam', 'gemini']
-          : ['openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
+    const providers = getProviderOrder(preferredProvider, sanitizedPrompt);
 
     let lastError: Error | null = null;
     for (const provider of providers) {
       try {
         if (provider === 'sarvam') {
-          return await callSarvam(sanitizedPrompt, history, systemInstruction || professionalStyle);
+          return await callSarvam(sanitizedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'openrouter') {
-          return await callOpenRouter(sanitizedPrompt, history, systemInstruction || professionalStyle);
+          return await callOpenRouter(sanitizedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'openai') {
-          return await callOpenAI(sanitizedPrompt, history, systemInstruction || professionalStyle);
+          return await callOpenAI(sanitizedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'anthropic') {
-          return await callAnthropic(sanitizedPrompt, history, systemInstruction || professionalStyle);
+          return await callAnthropic(sanitizedPrompt, compactHistory, adaptiveInstruction);
         }
 
         const geminiKey = getGeminiApiKey();
@@ -284,11 +331,11 @@ export const generateBotResponse = async (
         const response: GenerateContentResponse = await ai.models.generateContent({
           model: modelName,
           contents: [
-            ...history,
+            ...compactHistory,
             { role: 'user', parts: [{ text: sanitizedPrompt }] }
           ],
           config: {
-            systemInstruction: systemInstruction || professionalStyle,
+            systemInstruction: adaptiveInstruction,
             temperature: 0.2,
             maxOutputTokens: 480,
             thinkingConfig: { thinkingBudget: 0 }
