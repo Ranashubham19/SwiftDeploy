@@ -157,9 +157,7 @@ const ConnectDiscord: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ us
 
         <div className="p-12 md:p-16">
             <div className="flex items-center gap-3 mb-10">
-              <div className="w-10 h-10 bg-[#5865F2] rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(88,101,242,0.45)]">
-                <ICONS.Discord className="w-6 h-6" />
-              </div>
+              <ICONS.Discord className="w-9 h-9 shrink-0" />
               <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight uppercase italic">Connect Discord</h1>
             </div>
 

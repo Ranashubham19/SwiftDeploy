@@ -142,9 +142,7 @@ const ConnectTelegram: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ u
           {/* Left Side: Instructions */}
           <div className="flex-1 p-12 md:p-20 border-b md:border-b-0 md:border-r border-white/5">
             <div className="flex items-center gap-3 mb-12">
-              <div className="w-10 h-10 bg-[#0088cc] rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(0,136,204,0.4)]">
-                <ICONS.Telegram className="w-6 h-6 text-white" />
-              </div>
+              <ICONS.Telegram className="w-9 h-9 shrink-0" />
               <h1 className="text-2xl font-black text-white tracking-tight uppercase italic">Connect Telegram</h1>
             </div>
 
