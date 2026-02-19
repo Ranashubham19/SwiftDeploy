@@ -123,14 +123,14 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
         <div className="text-center mb-16 max-w-5xl">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-400/10 border border-cyan-300/20 text-cyan-300 text-xs font-black uppercase tracking-[0.2em] mb-8">
             <span className="w-2 h-2 bg-cyan-300 rounded-full animate-pulse"></span>
-            Global Cluster Provisioning Online
+            AI Business Assistant Infrastructure
           </div>
           <h1 className="text-5xl md:text-8xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase">
-            Deploy <span className="text-cyan-300">Autonomous</span> Bots <br /> 
-            in <span className="text-zinc-400">Record Time</span>
+            Build <span className="text-cyan-300">Revenue-Ready</span> AI Assistants <br /> 
+            for <span className="text-zinc-400">Real Business Outcomes</span>
           </h1>
           <p className="text-lg md:text-xl text-zinc-400 font-medium max-w-3xl mx-auto leading-relaxed italic">
-            Authorized infrastructure for Telegram, Discord, and WhatsApp. Scalable cloud backbone for enterprise AI agents.
+            Launch lead capture, conversion, and support assistants across Telegram and Discord with monetization, analytics, and CRM memory built in.
           </p>
         </div>
 
@@ -238,6 +238,81 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
               </p>
 
             </div>
+          </div>
+        </div>
+
+        {/* Outcome-Focused Differentiators */}
+        <div className="w-full max-w-7xl px-6 mb-36">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl md:text-6xl font-black italic text-white tracking-tighter uppercase mb-4">Outcome Engine</h2>
+            <p className="text-zinc-500 font-bold italic text-lg">Designed to grow revenue, not just deploy bots.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+            {[
+              {
+                title: 'Monetization Rails',
+                desc: 'Paywalled replies, subscription unlocks, free-usage limits, and payment triggers for premium flows.',
+                metric: 'Revenue Controls: Native'
+              },
+              {
+                title: 'Template Studio',
+                desc: 'Industry-ready bot blueprints for coaching, real estate, ecommerce, education, and agencies.',
+                metric: 'Launch Time: < 10 min'
+              },
+              {
+                title: 'AI CRM Memory',
+                desc: 'Lead score, lifecycle tags, history context, and sync/export paths for follow-up pipelines.',
+                metric: 'Lead Context: Persistent'
+              },
+              {
+                title: 'Agency White-Label',
+                desc: 'Brandless client delivery mode for agencies to resell automation systems at scale.',
+                metric: 'B2B Resell Ready'
+              }
+            ].map((item) => (
+              <div key={item.title} className="config-card p-8 bg-[#0c0c0e]/45 border-white/5 hover:border-cyan-300/20 transition-all">
+                <div className="w-12 h-12 rounded-2xl bg-cyan-400/10 border border-cyan-300/20 flex items-center justify-center mb-5">
+                  <ICONS.Check className="w-5 h-5 text-cyan-300" />
+                </div>
+                <h3 className="text-2xl font-black text-white uppercase tracking-tight mb-3">{item.title}</h3>
+                <p className="text-zinc-400 text-sm font-bold leading-relaxed italic mb-5">{item.desc}</p>
+                <div className="inline-flex items-center px-3 py-1 rounded-full border border-cyan-300/25 bg-cyan-500/10 text-cyan-200 text-[10px] font-black uppercase tracking-widest">
+                  {item.metric}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Business Template Packs */}
+        <div className="w-full max-w-7xl px-6 mb-40">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-14">
+            <div>
+              <h2 className="text-4xl md:text-6xl font-black italic text-white tracking-tighter uppercase mb-4">Business Template Packs</h2>
+              <p className="text-zinc-500 font-bold italic text-lg">Pre-built flows to launch specific outcomes fast.</p>
+            </div>
+            <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">India-Ready Language Presets Included</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {[
+              ['Real Estate Lead Bot', 'Captures buyer intent, budgets, and location preferences with instant qualification.'],
+              ['Coaching Enrollment Bot', 'Handles discovery, eligibility, and payment-ready enrollment workflow.'],
+              ['Ecommerce Support Bot', 'Resolves orders, returns, FAQs, and upsell prompts automatically.'],
+              ['Agency Client Bot', 'Collects briefs, scopes requests, and automates delivery updates.'],
+              ['Education Doubt Bot', 'Provides structured doubt solving with topic-based memory context.'],
+              ['Creator Monetization Bot', 'Unlocks premium answers, subscriber-only help, and paid consultations.']
+            ].map(([title, desc]) => (
+              <div key={title} className="config-card p-7 bg-black/30 border-white/10 hover:border-white/25 transition-all">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-cyan-300">Ready Template</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">2-Min Setup</span>
+                </div>
+                <h3 className="text-xl font-black text-white tracking-tight uppercase mb-3">{title}</h3>
+                <p className="text-sm text-zinc-400 font-bold italic leading-relaxed">{desc}</p>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -350,7 +425,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <h3 className="text-3xl font-black italic text-white mb-2 uppercase tracking-tighter">Starter</h3>
                 <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Limited trial for testing SwiftDeploy quickly.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-6xl font-black text-white italic tracking-tighter">$0</span>
+                  <span className="text-6xl font-black text-white italic tracking-tighter">₹0</span>
                   <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ free</span>
                 </div>
                 <ul className="space-y-4 mb-10 flex-1">
@@ -381,16 +456,17 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet</h3>
                 <p className="text-zinc-500 text-sm font-bold italic mb-8 italic leading-relaxed">Advanced production node billed monthly.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">$39</span>
+                  <span className="text-7xl font-black text-white italic tracking-tighter">₹999</span>
                   <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ month</span>
                 </div>
                 <ul className="space-y-4 mb-12 flex-1">
-                  {["10 Production Bots", "Enterprise Memory Nodes", "24/7 Priority Support", "Custom Webhook Tunneling", "Audit Log Retention"].map(f => (
+                  {["10 Production Bots", "Enterprise Memory Nodes", "24/7 Priority Support", "Custom Webhook Tunneling", "Built-in Monetization Controls"].map(f => (
                     <li key={f} className="flex items-center gap-3 text-[13px] font-bold text-zinc-300 italic">
                       <ICONS.Check className="w-4 h-4 text-blue-500" /> {f}
                     </li>
                   ))}
                 </ul>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-6">Optional 5% success commission on bot-collected revenue</p>
                 <button 
                   onClick={() => {
                     if (user) {
@@ -412,8 +488,8 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 <h3 className="text-4xl font-black italic text-white mb-2 uppercase tracking-tighter">Pro Fleet Yearly</h3>
                 <p className="text-zinc-500 text-sm font-bold italic mb-8 leading-relaxed">Annual contract with better savings.</p>
                 <div className="flex items-baseline gap-2 mb-10">
-                  <span className="text-7xl font-black text-white italic tracking-tighter">$399</span>
-                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ year</span>
+                  <span className="text-7xl font-black text-white italic tracking-tighter">₹2,999</span>
+                  <span className="text-zinc-600 font-bold uppercase tracking-widest text-xs">/ month equivalent</span>
                 </div>
                 <ul className="space-y-4 mb-12 flex-1">
                   {["Everything in Monthly Pro", "2 Months Price Advantage", "Long-Term Stability Pricing", "Priority Enterprise Queues", "Annual Success Review"].map(f => (
@@ -459,7 +535,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                <div>
                  <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Starting at</p>
                  <p className="text-5xl font-black italic text-white tracking-tighter">
-                   {customCoreCycle === 'yearly' ? '$999' : '$99'}
+                   {customCoreCycle === 'yearly' ? '₹2,40,000' : '₹24,999'}
                    <span className="text-zinc-600 text-base font-bold"> / {customCoreCycle === 'yearly' ? 'year' : 'month'}</span>
                  </p>
                </div>
