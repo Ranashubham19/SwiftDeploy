@@ -524,7 +524,7 @@ declare global {
 async function getAIResponse(userText: string): Promise<string> {
   try {
     if (!process.env.HUGGINGFACE_API_KEY) {
-      return 'AI routing is active. I am ready to help with your request.';
+      throw new Error('HUGGINGFACE_KEY_MISSING');
     }
     // Use Hugging Face service
     const response = await huggingFaceService.generateResponse(userText, 
@@ -534,14 +534,29 @@ async function getAIResponse(userText: string): Promise<string> {
     const safeResponse = String(response || '').trim();
     if (!safeResponse) return 'No signal detected from Neural Backbone.';
     if (safeResponse.toLowerCase().includes('huggingface_api_key')) {
-      return 'AI routing is active. I am ready to help with your request.';
+      throw new Error('HUGGINGFACE_KEY_MISSING');
     }
     return safeResponse;
   } catch (error) {
-    console.error("[Neural Link Error]:", error);
-    return "Signal Interrupted. The AI engine is undergoing maintenance.";
+    throw error;
   }
 }
+
+const generateEmergencyReply = (messageText: string): string => {
+  const text = String(messageText || '').trim();
+  const lower = text.toLowerCase();
+  if (!text) return 'Please send a message and I will help you right away. ✨';
+  if (/^(hi|hii|hello|hey)\b/.test(lower)) {
+    return 'Hi! I am online and ready to help. Ask me anything about your bot, deployment, or setup. 😊';
+  }
+  if (/(bye|good ?night|good ?bye)/.test(lower)) {
+    return 'Goodbye! I will stay online 24/7 whenever you need help again. 👋';
+  }
+  if (/(help|support|issue|error|problem)/.test(lower)) {
+    return 'I can help. Please share the exact error text or screenshot details, and I will give a step-by-step fix. 🛠️';
+  }
+  return `I received your message: "${text.slice(0, 220)}". I am reconnecting AI providers right now. Please retry in 10-20 seconds for full intelligent response. ⚡`;
+};
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
   return await Promise.race([
@@ -859,7 +874,9 @@ const generateProfessionalReply = async (messageText: string): Promise<string> =
       return clean;
     } catch (fallbackError) {
       console.error('[AI] Fallback model failed:', fallbackError);
-      return 'Temporary AI routing issue detected. Please retry in a few seconds.';
+      const emergency = generateEmergencyReply(messageText);
+      aiResponseCache.set(normalizedPrompt, { text: emergency, expiresAt: Date.now() + 15_000 });
+      return emergency;
     }
   }
 };
