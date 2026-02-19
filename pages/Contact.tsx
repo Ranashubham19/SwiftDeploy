@@ -324,7 +324,7 @@ const Contact: React.FC = () => {
                     onClick={() => navigate('/login?mode=register')}
                     className="flex items-center gap-3 text-zinc-300 hover:text-white transition-colors font-semibold text-sm bg-[#0f1013] border border-white/10 rounded-xl px-4 py-3 text-left"
                   >
-                    <ICONS.Dashboard className="w-4 h-4" />
+                    <ICONS.Check className="w-4 h-4" />
                     Get Started
                   </button>
                 </div>

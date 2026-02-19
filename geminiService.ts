@@ -3,7 +3,7 @@ import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { AIModel } from "./types";
 
 /**
- * Dashboard Neural Interface Service
+ * Neural Interface Service
  * Compliant with @google/genai version 1.41.0
  */
 export const generateBotResponse = async (
@@ -56,7 +56,7 @@ export const generateBotResponse = async (
 
     return response.text || "No signal response detected.";
   } catch (error) {
-    console.error("Dashboard AI Core Error:", error);
+    console.error("AI Core Error:", error);
     
     // Enhanced error handling with specific error types
     if (error instanceof Error) {

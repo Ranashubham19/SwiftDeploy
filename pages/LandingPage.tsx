@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User, Platform } from '../types';
 import { ICONS } from '../constants';
@@ -10,20 +10,6 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   const navigate = useNavigate();
   const [selectedModel, setSelectedModel] = useState<string>('gpt-5-2');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>(Platform.TELEGRAM);
-
-  // Only redirect on initial load if user is logged in and not manually navigating to home
-  const [hasRedirected, setHasRedirected] = useState(false);
-  
-  useEffect(() => {
-    // Check if user navigated here manually (via URL or navigation)
-    const cameFromNavigation = window.history.state?.usr?.fromNavigation;
-    
-    // Remove automatic redirect to dashboard - users should stay on home page
-    // if (user && !hasRedirected && !cameFromNavigation) {
-    //   setHasRedirected(true);
-    //   navigate('/dashboard', { replace: true });
-    // }
-  }, [user, navigate, hasRedirected]);
 
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
@@ -36,7 +22,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
       } else if (selectedPlatform === Platform.DISCORD) {
         navigate('/connect/discord', { state: { model: selectedModel } });
       } else {
-        navigate('/dashboard', { state: { openDeploy: true, platform: selectedPlatform, model: selectedModel } });
+        navigate('/contact');
       }
     } else {
       navigate('/login?mode=register');
@@ -68,9 +54,12 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             </>
           ) : (
             <div className="flex items-center gap-3">
-              <Link to="/dashboard" className="btn-deploy-gradient text-sm font-black px-8 py-3 rounded-xl transition-all uppercase">
-                Command Center
-              </Link>
+              <button
+                onClick={() => navigate('/connect/telegram', { state: { model: selectedModel } })}
+                className="btn-deploy-gradient text-sm font-black px-8 py-3 rounded-xl transition-all uppercase"
+              >
+                Launch Bot
+              </button>
               <div className="relative group">
                 <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/10 shadow-lg bg-zinc-900 cursor-pointer">
                   <img 
@@ -350,9 +339,9 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 },
                 {
                   title: "Live Observability",
-                  desc: "Per-bot telemetry, response quality traces, and operational events are visible in the command dashboard.",
+                  desc: "Per-bot telemetry, response quality traces, and operational events stay visible in live operations.",
                   metric: "Live Refresh: 5s",
-                  icon: <ICONS.Dashboard className="w-6 h-6" />
+                  icon: <ICONS.Check className="w-6 h-6 text-cyan-300" />
                 },
                 {
                   title: "Verified Provisioning",
