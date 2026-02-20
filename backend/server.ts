@@ -1176,7 +1176,30 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     }
   }
 
+  cleaned = applyProfessionalLayout(cleaned);
   return cleaned;
+};
+
+const applyProfessionalLayout = (text: string): string => {
+  const value = String(text || '').replace(/\r/g, '').trim();
+  if (!value) return value;
+  const parts = value.split(/(```[\s\S]*?```)/g).filter(Boolean);
+  const normalized = parts.map((part) => {
+    if (part.startsWith('```')) {
+      return part.trim();
+    }
+    return part
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/([^\n])\n([A-Z][^:\n]{2,40}:)/g, '$1\n\n$2')
+      .replace(/([^\n])\n(-\s|\d+\.\s)/g, '$1\n\n$2')
+      .trim();
+  });
+  return normalized
+    .filter(Boolean)
+    .join('\n\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 };
 
 const ensureEmojiInReply = (text: string, prompt: string): string => {
@@ -1266,7 +1289,22 @@ const sendTelegramReply = async (targetBot: TelegramBot, chatId: number, text: s
   const safe = sanitizeForTelegram(stripReconnectLoopReply(text));
   const chunks = splitTelegramMessage(safe);
   for (let i = 0; i < chunks.length; i += 1) {
-    await targetBot.sendMessage(chatId, chunks[i], {});
+    const chunk = chunks[i];
+    const baseOptions: Record<string, unknown> = {};
+    if (i === 0 && replyTo) {
+      baseOptions.reply_to_message_id = replyTo;
+    }
+    const fenceCount = (chunk.match(/```/g) || []).length;
+    const canRenderMarkdown = chunk.includes('```') && fenceCount % 2 === 0;
+    if (canRenderMarkdown) {
+      try {
+        await targetBot.sendMessage(chatId, chunk, { ...baseOptions, parse_mode: 'Markdown' });
+        continue;
+      } catch {
+        // Fall back to plain text if Telegram markdown parsing fails.
+      }
+    }
+    await targetBot.sendMessage(chatId, chunk, baseOptions);
   }
 };
 
