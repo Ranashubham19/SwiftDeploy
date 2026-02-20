@@ -403,6 +403,7 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
   const model = (process.env.MOONSHOT_MODEL || 'kimi-k2-0905-preview').trim();
   const historyText = extractHistoryText(history);
   const baseUrl = (process.env.MOONSHOT_BASE_URL || 'https://api.moonshot.ai/v1/chat/completions').trim();
+  const moonshotMaxTokens = Math.max(64, parseInt(process.env.MOONSHOT_MAX_TOKENS || '512', 10) || 512);
   const isNvidiaOpenAICompat = /integrate\.api\.nvidia\.com/i.test(baseUrl);
   const thinkingEnabled = (process.env.MOONSHOT_THINKING || 'false').trim().toLowerCase() === 'true';
   const body = {
@@ -414,7 +415,7 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
     ],
     temperature: MODEL_TEMPERATURE,
     top_p: MODEL_TOP_P,
-    max_tokens: MODEL_MAX_TOKENS,
+    max_tokens: moonshotMaxTokens,
     ...(isNvidiaOpenAICompat ? { chat_template_kwargs: { thinking: thinkingEnabled } } : {})
   };
 

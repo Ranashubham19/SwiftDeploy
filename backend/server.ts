@@ -386,7 +386,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = derivedBaseUrl.replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
-const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '18000', 10);
+const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '90000', 10);
 
 // Rate limiting configuration
 const authRateLimit = rateLimit({
