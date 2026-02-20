@@ -12,6 +12,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const navigate = useNavigate();
   const location = useLocation();
   const isSuccessStage = new URLSearchParams(location.search).get('stage') === 'success';
+  const stageBotUsername = new URLSearchParams(location.search).get('bot') || '';
+  const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
 
   const [token, setToken] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
@@ -19,6 +21,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [flowStep, setFlowStep] = useState<FlowStep>(isSuccessStage ? 'success' : 'token');
   const [deployError, setDeployError] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
+  const [connectedBotUsername, setConnectedBotUsername] = useState(stageBotUsername);
+  const [connectedBotLink, setConnectedBotLink] = useState(stageBotLink);
 
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -73,16 +77,13 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setDeployStep('webhooking');
     await new Promise((r) => setTimeout(r, 1000));
 
-    const botId = Math.random().toString(36).slice(2, 11);
-
     try {
       const response = await fetch(apiUrl('/deploy-bot'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          botToken: token.trim(),
-          botId
+          botToken: token.trim()
         })
       });
 
@@ -98,7 +99,10 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         throw new Error(result.error || 'Deployment failed');
       }
 
-      const botName = `SwiftNode-${bots.length + 1}`;
+      const botId = String(result.botId || '').trim() || Math.random().toString(36).slice(2, 11);
+      const botUsername = String(result.botUsername || '').trim();
+      const telegramLink = String(result.telegramLink || '').trim() || (botUsername ? `https://t.me/${botUsername}` : '');
+      const botName = botUsername ? `@${botUsername}` : `TelegramBot-${bots.length + 1}`;
       const newBot: Bot = {
         id: botId,
         name: botName,
@@ -110,10 +114,14 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         tokenUsage: 0,
         lastActive: new Date().toISOString(),
         memoryEnabled: true,
-        webhookUrl: result.webhookUrl
+        webhookUrl: result.webhookUrl,
+        telegramUsername: botUsername || undefined,
+        telegramLink: telegramLink || undefined
       };
 
       setBots([newBot, ...bots]);
+      setConnectedBotUsername(botUsername);
+      setConnectedBotLink(telegramLink);
       setShowConnectedToast(true);
       window.setTimeout(() => setShowConnectedToast(false), 4200);
       setFlowStep('send-first-message');
@@ -127,7 +135,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   };
 
   const confirmFirstMessage = async () => {
-    navigate('/connect/telegram/pairing');
+    setFlowStep('success');
+    const query = connectedBotUsername ? `?stage=success&bot=${encodeURIComponent(connectedBotUsername)}` : '?stage=success';
+    navigate(`/connect/telegram${query}`, { replace: true });
   };
 
   const handlePurchaseCredit = async () => {
@@ -163,12 +173,22 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         <div className="space-y-6">
           <h2 className="text-[17px] font-black text-white mb-4 italic uppercase tracking-tighter">Connect your Telegram</h2>
           <ul className="space-y-4">
-            <li className="text-zinc-400 text-[14px]">1. Open your bot in Telegram.</li>
+            <li className="text-zinc-400 text-[14px]">1. Open your bot in Telegram ({connectedBotUsername ? `@${connectedBotUsername}` : 'from BotFather'}).</li>
             <li className="text-zinc-400 text-[14px]">
               2. Send <code className="bg-zinc-800 text-zinc-200 px-2 py-1 rounded text-xs font-mono">/start</code> to activate the conversation.
             </li>
             <li className="text-zinc-400 text-[14px]">3. Click below after you send the first message.</li>
           </ul>
+          {connectedBotLink ? (
+            <a
+              href={connectedBotLink}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-center bg-zinc-800 hover:bg-zinc-700 text-white py-3 rounded-xl font-black uppercase text-xs tracking-wider"
+            >
+              Open @{connectedBotUsername || 'your_bot'} in Telegram
+            </a>
+          ) : null}
           <button
             onClick={confirmFirstMessage}
             className="w-full btn-deploy-gradient text-white py-5 rounded-2xl font-black text-base transition-all uppercase"
@@ -208,8 +228,13 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           <div>
             <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">Deployment success!</h2>
             <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
-              Your bot is live. Use your Telegram to chat; usage and credits are below.
+              Your token has been connected. Telegram bot identity is managed by BotFather.
             </p>
+            {connectedBotUsername ? (
+              <p className="text-zinc-200 mt-2">
+                Connected bot: <span className="font-black">@{connectedBotUsername}</span>
+              </p>
+            ) : null}
           </div>
 
           <div className="pt-2">
@@ -252,12 +277,12 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-[460px] mx-auto pt-1">
             <a
-              href="https://t.me/BotFather"
+              href={connectedBotLink || 'https://t.me/BotFather'}
               target="_blank"
               rel="noreferrer"
               className="text-center bg-zinc-800 hover:bg-zinc-700 text-white py-3 rounded-xl font-black uppercase text-xs tracking-wider"
             >
-              Open Telegram
+              {connectedBotLink ? 'Open Connected Bot' : 'Open Telegram'}
             </a>
             <button
               onClick={() => navigate('/')}
@@ -285,7 +310,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
               <>Follow the prompts to name your bot and choose a username.</>,
               <>BotFather will send you a message with your bot token. Copy the entire token.</>,
               <>Paste the token below and click Save & Connect.</>,
-              <>SwiftDeploy will verify token, configure webhook, and activate your bot.</>
+              <>SwiftDeploy will verify token, configure webhook, and connect the same BotFather bot (it does not create a new bot name).</>
             ].map((step, i) => (
               <li key={i} className="flex gap-4 text-[14px] font-medium text-zinc-500 leading-relaxed">
                 <span className="text-zinc-700 font-black shrink-0">{i + 1}.</span>
@@ -457,7 +482,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             </div>
             <div>
               <p className="text-emerald-200 font-black text-sm tracking-wide">Telegram connected</p>
-              <p className="text-emerald-100/85 text-xs mt-1">Your bot is now linked. You are ready to send and receive messages.</p>
+              <p className="text-emerald-100/85 text-xs mt-1">
+                {connectedBotUsername ? `Connected to @${connectedBotUsername}.` : 'Your bot token is now linked.'}
+              </p>
             </div>
           </div>
         </div>

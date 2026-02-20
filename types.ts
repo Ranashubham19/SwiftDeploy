@@ -39,4 +39,6 @@ export interface Bot {
   lastActive: string;
   memoryEnabled: boolean;
   webhookUrl?: string;
+  telegramUsername?: string;
+  telegramLink?: string;
 }
