@@ -90,10 +90,14 @@ const discordGatewayClients = new Map<string, DiscordClient>();
 const managedBots = new Map<string, TelegramBot>();
 const managedBotListeners = new Set<string>();
 const telegramBotOwners = new Map<string, string>();
+const telegramBotUsernames = new Map<string, string>();
+const telegramBotNames = new Map<string, string>();
 type TelegramBotConfig = {
   botId: string;
   botToken: string;
   ownerEmail: string;
+  botUsername?: string;
+  botName?: string;
   createdAt: string;
 };
 type PersistedBotState = {
@@ -301,6 +305,8 @@ const persistBotState = (): void => {
     botId,
     botToken,
     ownerEmail: telegramBotOwners.get(botId) || '',
+    botUsername: telegramBotUsernames.get(botId) || undefined,
+    botName: telegramBotNames.get(botId) || undefined,
     createdAt: new Date().toISOString()
   }));
   const state: PersistedBotState = {
@@ -894,6 +900,8 @@ const restorePersistedBots = async (): Promise<void> => {
     if (!botId || !botToken) continue;
 
     botTokens.set(botId, botToken);
+    if (tg.botUsername) telegramBotUsernames.set(botId, String(tg.botUsername).trim());
+    if (tg.botName) telegramBotNames.set(botId, String(tg.botName).trim());
     if (tg.ownerEmail) {
       telegramBotOwners.set(botId, tg.ownerEmail.trim().toLowerCase());
       ensureBotTelemetry(botId, 'TELEGRAM', tg.ownerEmail.trim().toLowerCase());
@@ -1308,7 +1316,17 @@ const getAssistantName = (conversationKey?: string): string => {
   if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
   const profile = userProfiles.get(conversationKey);
   const named = sanitizeAssistantName(profile?.assistantName || '');
-  return named || DEFAULT_ASSISTANT_NAME;
+  if (named) return named;
+
+  const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
+  const telegramBotId = String(tgMatch?.[1] || '').trim();
+  if (telegramBotId) {
+    const botName = sanitizeAssistantName(telegramBotNames.get(telegramBotId) || '');
+    if (botName) return botName;
+    const botUsername = sanitizeAssistantName(telegramBotUsernames.get(telegramBotId) || '');
+    if (botUsername) return botUsername;
+  }
+  return DEFAULT_ASSISTANT_NAME;
 };
 
 const setAssistantNamePreference = (conversationKey: string | undefined, name: string): string => {
@@ -1999,6 +2017,8 @@ app.post('/webhook/:botId', (req, res) => {
     if (match?.botToken) {
       botToken = match.botToken;
       botTokens.set(match.botId, match.botToken);
+      if (match.botUsername) telegramBotUsernames.set(match.botId, String(match.botUsername).trim());
+      if (match.botName) telegramBotNames.set(match.botId, String(match.botName).trim());
       if (match.ownerEmail) {
         telegramBotOwners.set(match.botId, match.ownerEmail.trim().toLowerCase());
         ensureBotTelemetry(match.botId, 'TELEGRAM', match.ownerEmail.trim().toLowerCase());
@@ -2169,6 +2189,8 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
     // Store the bot token
     botTokens.set(botId, botToken);
     telegramBotOwners.set(botId, userEmail);
+    if (botUsername) telegramBotUsernames.set(botId, botUsername);
+    if (botName) telegramBotNames.set(botId, botName);
     ensureBotTelemetry(botId, 'TELEGRAM', userEmail);
 
     if (!isProduction) {
@@ -2215,6 +2237,8 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
       // Remove the bot token if webhook setup failed
       botTokens.delete(botId);
       telegramBotOwners.delete(botId);
+      telegramBotUsernames.delete(botId);
+      telegramBotNames.delete(botId);
       persistBotState();
       console.error(`[DEPLOY] Failed to deploy bot ${botId}:`, webhookResult.error);
       res.status(500).json({ 
