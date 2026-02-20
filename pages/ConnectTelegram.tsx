@@ -351,6 +351,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 max-w-[460px] mx-auto">
             <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 font-black pointer-events-none">$</span>
               <input
                 type="number"
                 min={10}
@@ -358,7 +359,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
                 value={creditAmount}
                 onChange={(e) => setCreditAmount(e.target.value)}
                 placeholder="Minimum amount: $10"
-                className="dark-number-input w-full bg-[#141416] border border-white/10 rounded-xl px-4 pr-14 py-3 text-zinc-200 font-semibold placeholder:text-zinc-500/90 placeholder:italic placeholder:font-medium placeholder:tracking-[0.01em] focus:outline-none focus:border-cyan-400/40"
+                className="dark-number-input w-full bg-[#141416] border border-white/10 rounded-xl pl-8 pr-14 py-3 text-zinc-200 font-semibold placeholder:text-zinc-500/90 placeholder:italic placeholder:font-medium placeholder:tracking-[0.01em] focus:outline-none focus:border-cyan-400/40"
               />
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
                 <button
