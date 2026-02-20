@@ -360,14 +360,14 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
                 <button
                   type="button"
                   onClick={increaseCreditAmount}
-                  className="w-6 h-5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 text-[10px] leading-none hover:bg-zinc-800"
+                  className="w-6 h-5 text-zinc-300 text-[10px] leading-none hover:text-white"
                 >
                   {'\u25B2'}
                 </button>
                 <button
                   type="button"
                   onClick={decreaseCreditAmount}
-                  className="w-6 h-5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 text-[10px] leading-none hover:bg-zinc-800"
+                  className="w-6 h-5 text-zinc-300 text-[10px] leading-none hover:text-white"
                 >
                   {'\u25BC'}
                 </button>
