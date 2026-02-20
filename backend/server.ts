@@ -119,6 +119,10 @@ type BotTelemetry = {
 };
 const botTelemetry = new Map<string, BotTelemetry>();
 const aiResponseCache = new Map<string, { text: string; expiresAt: number }>();
+type BotChatTurn = { role: 'user' | 'model'; parts: { text: string }[] };
+const chatHistoryStore = new Map<number, { history: BotChatTurn[]; updatedAt: number }>();
+const CHAT_HISTORY_TTL_MS = 30 * 60 * 1000;
+const CHAT_HISTORY_MAX_TURNS = 12;
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const FREE_DEPLOY_LIMIT = 1;
 const FREE_TRIAL_DAYS = 7;
@@ -363,7 +367,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
-const AI_RESPONSE_TIMEOUT_MS = 25000;
+const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '45000', 10);
 
 // Rate limiting configuration
 const authRateLimit = rateLimit({
@@ -837,17 +841,41 @@ const sendTelegramReply = async (targetBot: TelegramBot, chatId: number, text: s
   }
 };
 
-const generateProfessionalReply = async (messageText: string): Promise<string> => {
+const getChatHistory = (chatId?: number): BotChatTurn[] => {
+  if (!chatId) return [];
+  const entry = chatHistoryStore.get(chatId);
+  if (!entry) return [];
+  if (Date.now() - entry.updatedAt > CHAT_HISTORY_TTL_MS) {
+    chatHistoryStore.delete(chatId);
+    return [];
+  }
+  return entry.history;
+};
+
+const appendChatHistory = (chatId: number | undefined, userText: string, modelText: string): void => {
+  if (!chatId) return;
+  const existing = getChatHistory(chatId);
+  const next: BotChatTurn[] = [
+    ...existing,
+    { role: 'user' as const, parts: [{ text: userText }] },
+    { role: 'model' as const, parts: [{ text: modelText }] }
+  ].slice(-CHAT_HISTORY_MAX_TURNS);
+  chatHistoryStore.set(chatId, { history: next, updatedAt: Date.now() });
+};
+
+const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
   const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
-  const cached = aiResponseCache.get(normalizedPrompt);
+  const cacheKey = `${chatId || 0}:${normalizedPrompt}`;
+  const cached = aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.text;
   }
 
   const systemPrompt = (process.env.BOT_SYSTEM_PROMPT || 'You are SwiftDeploy AI assistant. Respond quickly, professionally, and accurately. Prefer concise, structured answers. Include relevant emojis naturally in responses (about 1-3 per reply). If uncertain, clearly state uncertainty instead of guessing.').trim();
   try {
+    const history = getChatHistory(chatId);
     const response = await withTimeout(
-      generateBotResponse(messageText, undefined, [], systemPrompt),
+      generateBotResponse(messageText, undefined, history, systemPrompt),
       AI_RESPONSE_TIMEOUT_MS,
       'AI response timeout'
     );
@@ -855,7 +883,8 @@ const generateProfessionalReply = async (messageText: string): Promise<string> =
       sanitizeForTelegram(response || 'No response generated.'),
       messageText
     );
-    aiResponseCache.set(normalizedPrompt, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+    appendChatHistory(chatId, messageText, clean);
+    aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
     return clean;
   } catch (error) {
     console.error('[AI] Primary model failed, switching to fallback:', error);
@@ -869,12 +898,13 @@ const generateProfessionalReply = async (messageText: string): Promise<string> =
         sanitizeForTelegram(fallback || 'No fallback response generated.'),
         messageText
       );
-      aiResponseCache.set(normalizedPrompt, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      appendChatHistory(chatId, messageText, clean);
+      aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
       return clean;
     } catch (fallbackError) {
       console.error('[AI] Fallback model failed:', fallbackError);
       const emergency = generateEmergencyReply(messageText);
-      aiResponseCache.set(normalizedPrompt, { text: emergency, expiresAt: Date.now() + 15_000 });
+      aiResponseCache.set(cacheKey, { text: emergency, expiresAt: Date.now() + 15_000 });
       return emergency;
     }
   }
@@ -887,7 +917,7 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
   
   console.log(`[TELEGRAM] Received message from ${msg.from?.username || 'Unknown'}: ${messageText}`);
   
-  const response = await generateProfessionalReply(messageText);
+  const response = await generateProfessionalReply(messageText, chatId);
   console.log(`[TELEGRAM] Sending response length=${response.length}`);
   await sendTelegramReply(bot, chatId, response, msg.message_id);
 };
