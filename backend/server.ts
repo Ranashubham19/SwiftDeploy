@@ -401,7 +401,7 @@ const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || (F
 const AI_MAX_RETRY_PASSES = Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || (FAST_REPLY_MODE ? '0' : '1'), 10));
 const AI_ENABLE_STRICT_RETRY = (process.env.AI_ENABLE_STRICT_RETRY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
 const AI_ENABLE_SELF_VERIFY = (process.env.AI_ENABLE_SELF_VERIFY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
-const TELEGRAM_STREAMING_ENABLED = (process.env.TELEGRAM_STREAMING_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const TELEGRAM_STREAMING_ENABLED = (process.env.TELEGRAM_STREAMING_ENABLED || 'false').trim().toLowerCase() !== 'false';
 const TELEGRAM_STREAM_START_DELAY_MS = parseInt(process.env.TELEGRAM_STREAM_START_DELAY_MS || '700', 10);
 const TELEGRAM_STREAM_PROGRESS_INTERVAL_MS = parseInt(process.env.TELEGRAM_STREAM_PROGRESS_INTERVAL_MS || '3500', 10);
 const WEBHOOK_SECRET_MASTER = String(process.env.TELEGRAM_WEBHOOK_SECRET || SESSION_SECRET || '').trim();
@@ -703,20 +703,23 @@ async function getAIResponse(userText: string): Promise<string> {
 const generateEmergencyReply = (messageText: string): string => {
   const text = String(messageText || '').trim();
   const lower = text.toLowerCase();
-  if (!text) return 'Please send a message and I will help you right away.';
+  if (!text) return 'Please send your question and I will help immediately.';
   if (/^(hi|hii|hello|hey)\b/.test(lower)) {
-    return 'Hi! I am online and ready to help. Ask me anything about your bot, deployment, or setup.';
+    return 'Hello. Ask your question and I will answer directly.';
   }
   if (/(how are you|how r u|how're you)/.test(lower)) {
-    return 'I am doing well and ready to help. Tell me what you need and I will assist right away.';
+    return 'I am ready to help. Tell me what you need.';
   }
   if (/(bye|good ?night|good ?bye)/.test(lower)) {
-    return 'Goodbye. I will stay online 24/7 whenever you need help again.';
+    return 'Goodbye. I will be here whenever you need help.';
   }
-  if (/(help|support|issue|error|problem)/.test(lower)) {
-    return 'I can help. Please share the exact error text or screenshot details, and I will give a step-by-step fix.';
+  if (/(ready to control my life|control my life|improve my life|discipline|focus|productivity)/.test(lower)) {
+    return 'Great mindset. Start with 3 rules today: 1) pick one priority and finish it before social media, 2) use 50 minutes work + 10 minutes break for 4 cycles, 3) end day with a 5-minute written plan for tomorrow.';
   }
-  return 'I am online and ready to help. Please ask your question again and I will answer directly.';
+  if (/(help|support|issue|error|problem|bug|not working)/.test(lower)) {
+    return 'I can help. Share the exact error and I will give you a direct fix.';
+  }
+  return 'I can answer this. Give me one specific goal and your current situation in one line, and I will give a direct action plan.';
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -996,6 +999,21 @@ const isSimplePrompt = (text: string): boolean => {
   return false;
 };
 
+const instantProfessionalReply = (text: string): string | null => {
+  const q = String(text || '').trim().toLowerCase();
+  if (!q) return null;
+  if (/ready to control my life|control my life|fix my life|change my life/.test(q)) {
+    return 'Yes. Start now with this 24-hour reset: 1) choose one non-negotiable task and finish it today, 2) block distractions for 2 deep-work sessions (50/10), 3) sleep on time and write tomorrow’s top 3 tasks before bed.';
+  }
+  if (/motivate me|motivation|i am lazy|procrastinating/.test(q)) {
+    return 'Do not wait for motivation. Use action first: pick one 20-minute task, start a timer, finish it, then continue one more cycle.';
+  }
+  if (/what should i do now|next step/.test(q)) {
+    return 'Immediate next step: define one priority, break it into 3 tasks, complete task 1 in the next 30 minutes.';
+  }
+  return null;
+};
+
 const formatProfessionalResponse = (text: string, prompt: string): string => {
   const raw = sanitizeForTelegram(text);
   if (!raw) return raw;
@@ -1038,7 +1056,7 @@ const stripReconnectLoopReply = (text: string): string => {
     || /please\s+retry\s+in\s+\d+\s*-\s*\d+\s*seconds/i.test(value)
     || /please\s+retry\s+in\s+\d+\s*seconds/i.test(value)
   ) {
-    return 'I am online and ready to help right now. Please ask your question again.';
+    return 'Temporary AI provider issue. Please resend your question in 5 seconds.';
   }
   return value;
 };
@@ -1103,9 +1121,9 @@ const sendTelegramStreamingReply = async (
   }
 
   const progressFrames = [
-    'Thinking...',
-    'Analyzing your request...',
-    'Preparing a high-quality response...'
+    'Working...',
+    'Preparing your answer...',
+    'Finalizing response...'
   ];
   let frameIndex = 0;
   let placeholderMessageId: number | null = null;
@@ -1531,6 +1549,11 @@ const generateProfessionalReply = async (
   }
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
+  const instant = instantProfessionalReply(trimmedInput);
+  if (instant) {
+    appendChatHistory(conversationKey, trimmedInput, instant);
+    return instant;
+  }
   if (isGreetingPrompt(normalizedPrompt)) {
     const fastGreeting = 'Hello! How can I help you today?';
     appendChatHistory(conversationKey, trimmedInput, fastGreeting);
