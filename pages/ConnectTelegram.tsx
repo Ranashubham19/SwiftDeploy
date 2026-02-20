@@ -321,11 +321,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
                 Connected bot: <span className="font-black">@{connectedBotUsername}</span>
               </p>
             ) : null}
-            {connectedAiModel ? (
-              <p className="text-zinc-400 mt-2 text-sm">
-                AI Engine: <span className="text-zinc-200 font-semibold">{connectedAiProvider}/{connectedAiModel}</span>
-              </p>
-            ) : null}
           </div>
 
           <div className="pt-2">
