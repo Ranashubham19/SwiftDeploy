@@ -356,18 +356,18 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
                 placeholder="Minimum amount: $10"
                 className="dark-number-input w-full bg-[#141416] border border-white/10 rounded-xl pl-8 pr-14 py-3 text-zinc-200 font-semibold placeholder:text-zinc-500/90 placeholder:italic placeholder:font-medium placeholder:tracking-[0.01em] focus:outline-none focus:border-cyan-400/40"
               />
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-0">
                 <button
                   type="button"
                   onClick={increaseCreditAmount}
-                  className="w-6 h-5 text-zinc-300 text-[10px] leading-none hover:text-white"
+                  className="w-6 h-4 text-zinc-300 text-[10px] leading-none hover:text-white"
                 >
                   {'\u25B2'}
                 </button>
                 <button
                   type="button"
                   onClick={decreaseCreditAmount}
-                  className="w-6 h-5 text-zinc-300 text-[10px] leading-none hover:text-white"
+                  className="w-6 h-4 text-zinc-300 text-[10px] leading-none hover:text-white"
                 >
                   {'\u25BC'}
                 </button>
