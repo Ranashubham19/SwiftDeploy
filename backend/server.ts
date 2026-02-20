@@ -1524,6 +1524,7 @@ const buildSystemPrompt = (
   intent: 'math' | 'current_event' | 'coding' | 'general',
   userProfile?: UserProfile
 ): string => {
+  const assistantDisplayName = sanitizeAssistantName(userProfile?.assistantName || '') || DEFAULT_ASSISTANT_NAME;
   const timezone = (process.env.BOT_USER_TIMEZONE || '').trim();
   const role = (process.env.BOT_USER_ROLE || '').trim();
   const priorities = (process.env.BOT_USER_PRIORITIES || '').trim();
@@ -1550,7 +1551,7 @@ const buildSystemPrompt = (
         : `Mode: General\n- Be clear, useful, and concise.`;
 
   const base = `
-You are ${DEFAULT_ASSISTANT_NAME}, a high-quality professional assistant.
+You are ${assistantDisplayName}, a high-quality professional assistant.
 
 Rules:
 - Prioritize accuracy over guessing.
@@ -1565,6 +1566,16 @@ ${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
 `.trim();
   const custom = (process.env.BOT_SYSTEM_PROMPT || '').trim();
   return custom ? `${base}\n\nAdditional instructions:\n${custom}` : base;
+};
+
+const applyAssistantIdentityPolicy = (text: string, conversationKey?: string): string => {
+  const out = String(text || '').trim();
+  if (!out || !conversationKey) return out;
+  const preferredName = getAssistantName(conversationKey);
+  if (!preferredName || preferredName.toLowerCase() === DEFAULT_ASSISTANT_NAME.toLowerCase()) return out;
+  return out
+    .replace(/\bSwiftDeploy AI assistant\b/gi, `${preferredName} assistant`)
+    .replace(/\bSwiftDeploy AI\b/gi, preferredName);
 };
 
 const detectIntent = (text: string): 'math' | 'current_event' | 'coding' | 'general' => {
@@ -1720,8 +1731,10 @@ const generateProfessionalReply = async (
         polished,
         trimmedInput
       );
+      clean = applyAssistantIdentityPolicy(clean, conversationKey);
       if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, trimmedInput))) {
         clean = instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput);
+        clean = applyAssistantIdentityPolicy(clean, conversationKey);
       }
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
         const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
@@ -1734,6 +1747,7 @@ const generateProfessionalReply = async (
           formatProfessionalResponse(strictRetry || clean, trimmedInput),
           trimmedInput
         );
+        clean = applyAssistantIdentityPolicy(clean, conversationKey);
       }
       const shouldRetry = AI_MAX_RETRY_PASSES > 0
         && !isSimplePrompt(trimmedInput)
@@ -1750,11 +1764,13 @@ const generateProfessionalReply = async (
           retryPolished,
           trimmedInput
         );
+        retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
           retryClean = ensureEmojiInReply(
             formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt), trimmedInput),
             trimmedInput
           );
+          retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
         }
         appendChatHistory(conversationKey, trimmedInput, retryClean);
         if (!timeSensitive) {
@@ -1777,6 +1793,7 @@ const generateProfessionalReply = async (
           formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt), trimmedInput),
           trimmedInput
         );
+        clean = applyAssistantIdentityPolicy(clean, conversationKey);
       }
       appendChatHistory(conversationKey, trimmedInput, clean);
       if (!timeSensitive) {
@@ -1808,10 +1825,10 @@ const generateProfessionalReply = async (
           'Fallback AI response timeout'
         );
         const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
-        const clean = ensureEmojiInReply(
+        const clean = applyAssistantIdentityPolicy(ensureEmojiInReply(
           fallbackPolished,
           trimmedInput
-        );
+        ), conversationKey);
         appendChatHistory(conversationKey, trimmedInput, clean);
         if (!timeSensitive) {
           aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
@@ -1903,6 +1920,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
 
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
   const botScope = `telegram:${botId || botToken.slice(0, 12)}`;
+  const conversationKey = buildConversationKey(botScope, chatId) || undefined;
 
   if (/^\/start(?:@\w+)?$/i.test(text)) {
     const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
@@ -1921,12 +1939,13 @@ const handleBotMessage = async (botToken: string, msg: any) => {
                 : provider === 'sarvam'
                   ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
                   : 'auto';
-    const welcome = `*SwiftDeploy Bot Active.*\n\nAI Provider: ${provider}\nAI Model: ${activeModel}\nMode: ${mode === 'premium' ? 'Premium Assistant' : 'Standard'}\nStatus: Operational\n\nSend a message to start chatting with AI.`;
+    const assistantName = getAssistantName(conversationKey);
+    const welcome = `*${assistantName} Bot Active.*\n\nAI Provider: ${provider}\nAI Model: ${activeModel}\nMode: ${mode === 'premium' ? 'Premium Assistant' : 'Standard'}\nStatus: Operational\n\nSend a message to start chatting with AI.`;
     await botInstance.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
   }
-  const commandReply = getCommandReply(text, buildConversationKey(botScope, chatId) || undefined);
+  const commandReply = getCommandReply(text, conversationKey);
   if (commandReply) {
     await sendTelegramReply(botInstance, chatId, commandReply, msg.message_id);
     if (botId) recordBotResponse(botId, commandReply, 0);

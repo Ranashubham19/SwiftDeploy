@@ -136,7 +136,7 @@ const needsLiveFacts = (text: string): boolean => {
 
 const buildSystemInstruction = (customInstruction?: string): string => {
   const base = `
-You are SwiftDeploy AI, a premium professional assistant.
+You are a premium professional assistant.
 Primary goals: accuracy over guessing, clarity over verbosity, reliable structured help.
 
 Core rules:
