@@ -888,6 +888,51 @@ const appendChatHistory = (chatId: number | undefined, userText: string, modelTe
   chatHistoryStore.set(chatId, { history: next, updatedAt: Date.now() });
 };
 
+const buildSystemPrompt = (): string => {
+  const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
+  const timezone = (process.env.BOT_USER_TIMEZONE || '').trim();
+  const role = (process.env.BOT_USER_ROLE || '').trim();
+  const priorities = (process.env.BOT_USER_PRIORITIES || '').trim();
+  const tone = (process.env.BOT_TONE || 'professional').trim();
+
+  const profile = [
+    timezone ? `Timezone: ${timezone}` : '',
+    role ? `User role: ${role}` : '',
+    priorities ? `Top priorities: ${priorities}` : '',
+    `Preferred tone: ${tone}`
+  ].filter(Boolean).join('\n');
+
+  const premiumPrompt = `
+You are Savio, a premium personal AI operator.
+Response style:
+- Confident, warm, highly professional.
+- Start with a direct answer first, then structure.
+- Use sections when useful: Summary, Action Plan, Risks, Next Step.
+- For estimates/time-sensitive topics: include "As of" date and assumptions.
+- Never return generic model-limit boilerplate unless user explicitly asks capabilities.
+- Never be vague when the user asks for execution steps.
+
+Quality bar:
+- Be concrete and practical.
+- Prefer checklists and decision-ready output.
+- If uncertain, say exactly what is uncertain and what is needed to resolve it.
+${profile ? `\nUser profile:\n${profile}` : ''}
+`.trim();
+
+  const standardPrompt = `
+You are SwiftDeploy AI assistant. Respond quickly, professionally, and accurately.
+Prefer concise, structured answers.
+Include relevant emojis naturally in responses (about 1-3 per reply).
+If uncertain, clearly state uncertainty instead of guessing.
+Never answer with self-capability disclaimers unless user explicitly asks.
+Focus on answering the user question directly.
+`.trim();
+
+  const base = mode === 'premium' ? premiumPrompt : standardPrompt;
+  const custom = (process.env.BOT_SYSTEM_PROMPT || '').trim();
+  return custom ? `${base}\n\nAdditional instructions:\n${custom}` : base;
+};
+
 const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
   const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
@@ -897,7 +942,7 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
     return cached.text;
   }
 
-  const systemPrompt = (process.env.BOT_SYSTEM_PROMPT || 'You are SwiftDeploy AI assistant. Respond quickly, professionally, and accurately. Prefer concise, structured answers. Include relevant emojis naturally in responses (about 1-3 per reply). If uncertain, clearly state uncertainty instead of guessing. Never answer with self-capability disclaimers (such as model version, early-access status, knowledge cutoff, or generic limitations) unless the user explicitly asks about capabilities. Focus on answering the user question directly.').trim();
+  const systemPrompt = buildSystemPrompt();
   try {
     const history = getChatHistory(chatId);
     const response = await withTimeout(
@@ -993,7 +1038,8 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
 
   if (text === '/start') {
-    const welcome = "*SwiftDeploy Bot Active.*\n\nAI Model: Kimi K2.5 (primary, with provider failover)\nStatus: Operational\n\nSend a message to start chatting with AI.";
+    const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
+    const welcome = `*SwiftDeploy Bot Active.*\n\nAI Model: Kimi K2.5 (primary, with provider failover)\nMode: ${mode === 'premium' ? 'Premium Assistant' : 'Standard'}\nStatus: Operational\n\nSend a message to start chatting with AI.`;
     await botInstance.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
