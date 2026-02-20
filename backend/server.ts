@@ -1003,6 +1003,18 @@ const isSimplePrompt = (text: string): boolean => {
 const instantProfessionalReply = (text: string): string | null => {
   const q = String(text || '').trim().toLowerCase();
   if (!q) return null;
+  if (/^(hi|hii|hello|hey|yo)\b/.test(q)) {
+    return 'Hello. Ask your question and I will give a direct professional answer.';
+  }
+  if (/who are you|what are you/.test(q)) {
+    return 'I am SwiftDeploy AI. I can help with coding, strategy, learning, troubleshooting, and practical planning.';
+  }
+  if (/what can you do|your capabilities|how can you help/.test(q)) {
+    return 'I can solve technical problems, explain concepts clearly, draft professional content, and provide actionable step-by-step plans.';
+  }
+  if (/what is ai\b|define ai\b/.test(q)) {
+    return 'AI is software that performs tasks requiring human-like intelligence, such as understanding language, reasoning, prediction, and decision support.';
+  }
   if (/ready to control my life|control my life|fix my life|change my life/.test(q)) {
     return 'Yes. Start now with this 24-hour reset: 1) choose one non-negotiable task and finish it today, 2) block distractions for 2 deep-work sessions (50/10), 3) sleep on time and write tomorrow’s top 3 tasks before bed.';
   }
@@ -1388,14 +1400,15 @@ const buildSystemPrompt = (
         : `Mode: General\n- Be clear, useful, and concise.`;
 
   const base = `
-You are SwiftDeploy AI, a GPT-5.2 style professional assistant.
+You are SwiftDeploy AI, a high-quality professional assistant.
 
 Rules:
-- Give direct, accurate answers first.
-- Use conversational tone by default; use structure only when it helps.
-- Do not invent facts or sources.
-- For time-sensitive questions, include current-year handling and "As of" date.
-- For complex tasks, provide actionable steps.
+- Prioritize accuracy over guessing.
+- Keep answers concise, clear, and practical.
+- Never hallucinate facts, links, or references.
+- If the question is ambiguous, ask one focused clarifying question.
+- For time-sensitive questions, include "As of" date and avoid stale claims.
+- Use structured output only when it helps the user solve the task faster.
 ${modeBlock}
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
 ${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
@@ -1550,6 +1563,9 @@ const generateProfessionalReply = async (
         polished,
         trimmedInput
       );
+      if (!clean || clean.length < 24) {
+        clean = instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput);
+      }
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
         const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
         const strictRetry = await withTimeout(
