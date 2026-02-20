@@ -805,6 +805,39 @@ const sanitizeForTelegram = (text: string): string => {
     .trim();
 };
 
+const toSentenceChunks = (text: string): string[] => {
+  return text
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+};
+
+const formatProfessionalResponse = (text: string, prompt: string): string => {
+  const raw = sanitizeForTelegram(text);
+  if (!raw) return raw;
+
+  const cleaned = raw
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+
+  const hasStructure = /(summary:|key points:|next step:|action plan:|risks:)/i.test(cleaned);
+  if (hasStructure) return cleaned;
+
+  const complex = isComplexPrompt(prompt) || cleaned.length > 280;
+  const sentences = toSentenceChunks(cleaned);
+  const summary = sentences[0] || cleaned;
+  const bullets = sentences.slice(1, 5).map((s) => `- ${s}`);
+
+  if (!complex) {
+    return `Summary:\n${summary}\n\nNext Step:\n- Let me know if you want a deeper breakdown.`;
+  }
+
+  const keyPoints = bullets.length ? bullets.join('\n') : `- ${summary}`;
+  return `Summary:\n${summary}\n\nKey Points:\n${keyPoints}\n\nNext Step:\n- Tell me your exact goal and I will provide a precise action plan.`;
+};
+
 const ensureEmojiInReply = (text: string, prompt: string): string => {
   const value = String(text || '').trim();
   if (!value) return 'Got it ??';
@@ -912,6 +945,9 @@ Response style:
 - For estimates/time-sensitive topics: include "As of" date and assumptions.
 - Never return generic model-limit boilerplate unless user explicitly asks capabilities.
 - Never be vague when the user asks for execution steps.
+- Keep language plain and executive-ready. Avoid jargon unless asked.
+- Avoid unnecessary detail; focus only on what helps decision-making.
+- Always format cleanly with spacing, short headings, and concise bullet points.
 
 Quality bar:
 - Be concrete and practical.
@@ -951,8 +987,9 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       AI_RESPONSE_TIMEOUT_MS,
       'AI response timeout'
     );
+    const polished = formatProfessionalResponse(response || 'No response generated.', messageText);
     const clean = ensureEmojiInReply(
-      sanitizeForTelegram(response || 'No response generated.'),
+      polished,
       messageText
     );
     if (looksLowQualityAnswer(clean, messageText)) {
@@ -962,8 +999,9 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         AI_RESPONSE_TIMEOUT_MS,
         'AI response timeout'
       );
+      const retryPolished = formatProfessionalResponse(retry || clean, messageText);
       const retryClean = ensureEmojiInReply(
-        sanitizeForTelegram(retry || clean),
+        retryPolished,
         messageText
       );
       appendChatHistory(chatId, messageText, retryClean);
@@ -991,8 +1029,9 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         AI_RESPONSE_TIMEOUT_MS,
         'Fallback AI response timeout'
       );
+      const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', messageText);
       const clean = ensureEmojiInReply(
-        sanitizeForTelegram(fallback || 'No fallback response generated.'),
+        fallbackPolished,
         messageText
       );
       appendChatHistory(chatId, messageText, clean);
