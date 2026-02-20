@@ -397,11 +397,12 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = derivedBaseUrl.replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'true').trim().toLowerCase() !== 'false';
-const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || (FAST_REPLY_MODE ? '25000' : '60000'), 10);
-const AI_MAX_RETRY_PASSES = Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || (FAST_REPLY_MODE ? '0' : '1'), 10));
-const AI_ENABLE_STRICT_RETRY = (process.env.AI_ENABLE_STRICT_RETRY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
-const AI_ENABLE_SELF_VERIFY = (process.env.AI_ENABLE_SELF_VERIFY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
-const TELEGRAM_STREAMING_ENABLED = (process.env.TELEGRAM_STREAMING_ENABLED || 'false').trim().toLowerCase() !== 'false';
+const rawTimeoutMs = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || (FAST_REPLY_MODE ? '15000' : '25000'), 10);
+const AI_RESPONSE_TIMEOUT_MS = Math.max(5000, Math.min(rawTimeoutMs, 20000));
+const AI_MAX_RETRY_PASSES = FAST_REPLY_MODE ? 0 : Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || '1', 10));
+const AI_ENABLE_STRICT_RETRY = FAST_REPLY_MODE ? false : (process.env.AI_ENABLE_STRICT_RETRY || 'true').trim().toLowerCase() !== 'false';
+const AI_ENABLE_SELF_VERIFY = FAST_REPLY_MODE ? false : (process.env.AI_ENABLE_SELF_VERIFY || 'true').trim().toLowerCase() !== 'false';
+const TELEGRAM_STREAMING_ENABLED = false;
 const TELEGRAM_STREAM_START_DELAY_MS = parseInt(process.env.TELEGRAM_STREAM_START_DELAY_MS || '700', 10);
 const TELEGRAM_STREAM_PROGRESS_INTERVAL_MS = parseInt(process.env.TELEGRAM_STREAM_PROGRESS_INTERVAL_MS || '3500', 10);
 const WEBHOOK_SECRET_MASTER = String(process.env.TELEGRAM_WEBHOOK_SECRET || SESSION_SECRET || '').trim();
@@ -1114,78 +1115,9 @@ const sendTelegramStreamingReply = async (
   responsePromise: Promise<string>,
   replyTo?: number
 ): Promise<string> => {
-  if (!TELEGRAM_STREAMING_ENABLED) {
-    const resolved = await responsePromise;
-    await sendTelegramReply(targetBot, chatId, resolved, replyTo);
-    return resolved;
-  }
-
-  const progressFrames = [
-    'Working...',
-    'Preparing your answer...',
-    'Finalizing response...'
-  ];
-  let frameIndex = 0;
-  let placeholderMessageId: number | null = null;
-  let progressInterval: NodeJS.Timeout | null = null;
-  let awaiting = true;
-
-  const startPlaceholderTimer = setTimeout(async () => {
-    if (!awaiting) return;
-    try {
-      const placeholder = await targetBot.sendMessage(
-        chatId,
-        progressFrames[0],
-        replyTo ? { reply_to_message_id: replyTo } : {}
-      );
-      placeholderMessageId = placeholder.message_id;
-      progressInterval = setInterval(async () => {
-        if (!awaiting || placeholderMessageId === null) return;
-        frameIndex = (frameIndex + 1) % progressFrames.length;
-        try {
-          await targetBot.editMessageText(progressFrames[frameIndex], {
-            chat_id: chatId,
-            message_id: placeholderMessageId
-          });
-        } catch {
-          // Ignore transient Telegram edit failures while waiting.
-        }
-      }, TELEGRAM_STREAM_PROGRESS_INTERVAL_MS);
-    } catch {
-      // Ignore placeholder failures and continue with final response send.
-    }
-  }, TELEGRAM_STREAM_START_DELAY_MS);
-
-  try {
-    const resolved = await responsePromise;
-    awaiting = false;
-    clearTimeout(startPlaceholderTimer);
-    if (progressInterval) clearInterval(progressInterval);
-
-    const safe = sanitizeForTelegram(stripReconnectLoopReply(resolved));
-    const chunks = splitTelegramMessage(safe);
-    if (placeholderMessageId !== null) {
-      try {
-        await targetBot.editMessageText(chunks[0] || 'No response generated.', {
-          chat_id: chatId,
-          message_id: placeholderMessageId
-        });
-        for (let i = 1; i < chunks.length; i += 1) {
-          await targetBot.sendMessage(chatId, chunks[i]);
-        }
-      } catch {
-        await sendTelegramReply(targetBot, chatId, resolved, replyTo);
-      }
-    } else {
-      await sendTelegramReply(targetBot, chatId, resolved, replyTo);
-    }
-    return resolved;
-  } catch (error) {
-    awaiting = false;
-    clearTimeout(startPlaceholderTimer);
-    if (progressInterval) clearInterval(progressInterval);
-    throw error;
-  }
+  const resolved = await responsePromise;
+  await sendTelegramReply(targetBot, chatId, resolved, replyTo);
+  return resolved;
 };
 
 const buildConversationKey = (scope: string, chatIdentity?: string | number): string | null => {
