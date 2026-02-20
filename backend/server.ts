@@ -141,11 +141,13 @@ const CONTEXT_DB_FILE = (process.env.CONTEXT_DB_FILE || '').trim()
 type UserProfile = {
   preferredTone?: 'professional' | 'formal' | 'casual' | 'concise';
   prefersConcise?: boolean;
+  assistantName?: string;
   recurringTopics: string[];
   topicCounts: Record<string, number>;
   updatedAt: number;
 };
 const userProfiles = new Map<string, UserProfile>();
+const DEFAULT_ASSISTANT_NAME = (process.env.BOT_ASSISTANT_NAME || 'SwiftDeploy AI').trim() || 'SwiftDeploy AI';
 const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
@@ -1017,7 +1019,7 @@ const instantProfessionalReply = (text: string): string | null => {
     return 'Yes. I can write, debug, optimize, and explain code in Python, JavaScript/TypeScript, Java, C++, SQL, and more. Share the exact problem and preferred language.';
   }
   if (/who are you|what are you/.test(q)) {
-    return 'I am SwiftDeploy AI. I can help with coding, strategy, learning, troubleshooting, and practical planning.';
+    return `I am ${DEFAULT_ASSISTANT_NAME}. I can help with coding, strategy, learning, troubleshooting, and practical planning.`;
   }
   if (/what can you do|your capabilities|how can you help/.test(q)) {
     return 'I can solve technical problems, explain concepts clearly, draft professional content, and provide actionable step-by-step plans.';
@@ -1294,6 +1296,48 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
   return null;
 };
 
+const sanitizeAssistantName = (input: string): string => {
+  return String(input || '')
+    .replace(/[`"'<>[\]{}()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32);
+};
+
+const getAssistantName = (conversationKey?: string): string => {
+  if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
+  const profile = userProfiles.get(conversationKey);
+  const named = sanitizeAssistantName(profile?.assistantName || '');
+  return named || DEFAULT_ASSISTANT_NAME;
+};
+
+const setAssistantNamePreference = (conversationKey: string | undefined, name: string): string => {
+  const nextName = sanitizeAssistantName(name);
+  if (!conversationKey || !nextName) return DEFAULT_ASSISTANT_NAME;
+  const current = userProfiles.get(conversationKey) || {
+    recurringTopics: [],
+    topicCounts: {},
+    updatedAt: Date.now()
+  };
+  current.assistantName = nextName;
+  current.updatedAt = Date.now();
+  userProfiles.set(conversationKey, current);
+  persistUserProfiles();
+  return nextName;
+};
+
+const extractAssistantRenameCommand = (text: string): string | null => {
+  const normalized = String(text || '').trim();
+  if (!normalized) return null;
+  const match = normalized.match(
+    /(?:from now (?:on|onwards)\s*,?\s*)?(?:your name is|you are|call yourself|i will call you)\s+([a-zA-Z][a-zA-Z0-9 _-]{1,31})/i
+  );
+  if (!match?.[1]) return null;
+  const raw = match[1].replace(/\b(ok|okay|please|now)\b.*$/i, '').trim();
+  const cleaned = sanitizeAssistantName(raw);
+  return cleaned || null;
+};
+
 const getChatHistory = (conversationKey?: string): BotChatTurn[] => {
   if (!conversationKey) return [];
   const entry = chatHistoryStore.get(conversationKey);
@@ -1416,6 +1460,7 @@ const loadUserProfiles = (): void => {
       userProfiles.set(conversationKey, {
         preferredTone: profile?.preferredTone,
         prefersConcise: Boolean(profile?.prefersConcise),
+        assistantName: sanitizeAssistantName(profile?.assistantName || '') || undefined,
         recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
         topicCounts: typeof profile?.topicCounts === 'object' && profile.topicCounts ? profile.topicCounts : {},
         updatedAt: Number(profile?.updatedAt || Date.now())
@@ -1490,6 +1535,7 @@ const buildSystemPrompt = (
   ].filter(Boolean).join('\n');
 
   const profileHints = [
+    userProfile?.assistantName ? `Assistant display name for this chat: ${sanitizeAssistantName(userProfile.assistantName)}` : '',
     userProfile?.preferredTone ? `Preferred tone: ${userProfile.preferredTone}` : '',
     userProfile?.prefersConcise ? 'User prefers concise answers.' : '',
     userProfile?.recurringTopics?.length ? `Recurring topics: ${userProfile.recurringTopics.join(', ')}` : ''
@@ -1504,7 +1550,7 @@ const buildSystemPrompt = (
         : `Mode: General\n- Be clear, useful, and concise.`;
 
   const base = `
-You are SwiftDeploy AI, a high-quality professional assistant.
+You are ${DEFAULT_ASSISTANT_NAME}, a high-quality professional assistant.
 
 Rules:
 - Prioritize accuracy over guessing.
@@ -1596,8 +1642,20 @@ const generateProfessionalReply = async (
   if (commandReply) {
     return commandReply;
   }
+  const renameTo = extractAssistantRenameCommand(trimmedInput);
+  if (renameTo) {
+    const appliedName = setAssistantNamePreference(conversationKey, renameTo);
+    const confirm = `✅ Done. My name in this chat is now ${appliedName}.`;
+    appendChatHistory(conversationKey, trimmedInput, confirm);
+    return confirm;
+  }
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
+  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??)/.test(normalizedPrompt)) {
+    const answer = `I am ${getAssistantName(conversationKey)} assistant. I can help with coding, debugging, bot setup, deployment, and general questions.`;
+    appendChatHistory(conversationKey, trimmedInput, answer);
+    return answer;
+  }
   const instant = instantProfessionalReply(trimmedInput);
   if (instant) {
     appendChatHistory(conversationKey, trimmedInput, instant);
@@ -1607,11 +1665,6 @@ const generateProfessionalReply = async (
     const fastGreeting = 'Hello! How can I help you today?';
     appendChatHistory(conversationKey, trimmedInput, fastGreeting);
     return fastGreeting;
-  }
-  if (/(what('?s| is)\s+your\s+name|your name\??)/.test(normalizedPrompt)) {
-    const answer = 'I am SwiftDeploy AI assistant. I can help with coding, debugging, bot setup, deployment, and general questions.';
-    appendChatHistory(conversationKey, trimmedInput, answer);
-    return answer;
   }
   if (/(what can you do|capabilities|how can you help|what do you do)/.test(normalizedPrompt)) {
     const answer = 'I can answer questions, help fix code, troubleshoot deployment issues, and guide Telegram/Discord bot setup step by step.';
