@@ -102,6 +102,7 @@ const botCredits = new Map<string, BotCreditState>();
 const INITIAL_BOT_CREDIT_USD = Math.max(1, parseInt(process.env.BOT_INITIAL_CREDIT_USD || '10', 10));
 const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '120000', 10));
 const CREDIT_DEDUCT_AMOUNT_USD = Math.max(1, parseInt(process.env.BOT_CREDIT_DEDUCT_AMOUNT_USD || '1', 10));
+const processedCreditSessions = new Set<string>();
 type TelegramBotConfig = {
   botId: string;
   botToken: string;
@@ -343,6 +344,15 @@ const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditSta
   state.lastChargedAt += steps * CREDIT_DEDUCT_INTERVAL_MS;
   state.depleted = state.remainingUsd <= 0;
   state.updatedAt = now;
+  botCredits.set(botId, state);
+  return state;
+};
+
+const addCreditToBot = (botId: string, amountUsd: number): BotCreditState => {
+  const state = applyCreditDecay(botId);
+  state.remainingUsd = Math.max(0, state.remainingUsd + Math.max(0, Math.floor(amountUsd)));
+  state.depleted = state.remainingUsd <= 0;
+  state.updatedAt = Date.now();
   botCredits.set(botId, state);
   return state;
 };
@@ -3678,6 +3688,14 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
   if (amountUsd > 5000) {
     return res.status(400).json({ success: false, message: 'Maximum single purchase is $5000.' });
   }
+  const botId = String(req.body?.botId || '').trim();
+  if (!botId) {
+    return res.status(400).json({ success: false, message: 'botId is required for credit top-up.' });
+  }
+  const owner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
+  if (!owner || owner !== email) {
+    return res.status(403).json({ success: false, message: 'Access denied for this bot credit top-up.' });
+  }
 
   const stripeSecretKey = getStripeSecretKey();
   if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
@@ -3685,8 +3703,8 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
   }
 
   const frontUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  const successUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=success`;
-  const cancelUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=cancel`;
+  const successUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=success&botId=${encodeURIComponent(botId)}&amount=${amountUsd}&session_id={CHECKOUT_SESSION_ID}`;
+  const cancelUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=cancel&botId=${encodeURIComponent(botId)}`;
 
   try {
     const params = new URLSearchParams();
@@ -3699,6 +3717,7 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
     params.set('metadata[purchase_type]', 'credit_topup');
     params.set('metadata[user_email]', email);
     params.set('metadata[amount_usd]', String(amountUsd));
+    params.set('metadata[bot_id]', botId);
     params.set('line_items[0][price_data][currency]', 'usd');
     params.set('line_items[0][price_data][unit_amount]', String(amountUsd * 100));
     params.set('line_items[0][price_data][product_data][name]', `SwiftDeploy Credit Top-up ($${amountUsd})`);
@@ -3720,6 +3739,69 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
     return res.json({ success: true, provider: 'stripe', checkoutUrl: stripeData.url, sessionId: stripeData.id });
   } catch {
     return res.status(500).json({ success: false, message: 'Failed to initialize secure checkout.' });
+  }
+});
+
+app.post('/billing/confirm-credit-session', requireAuth, async (req, res) => {
+  const reqUser = req.user as Express.User | undefined;
+  const email = (reqUser?.email || '').trim().toLowerCase();
+  if (!email) {
+    return res.status(401).json({ success: false, message: 'Authentication required' });
+  }
+
+  const sessionId = String(req.body?.sessionId || '').trim();
+  const botId = String(req.body?.botId || '').trim();
+  if (!sessionId || !botId) {
+    return res.status(400).json({ success: false, message: 'sessionId and botId are required.' });
+  }
+  if (processedCreditSessions.has(sessionId)) {
+    const credit = applyCreditDecay(botId);
+    return res.json({ success: true, botId, remainingUsd: credit.remainingUsd, alreadyProcessed: true });
+  }
+
+  const owner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
+  if (!owner || owner !== email) {
+    return res.status(403).json({ success: false, message: 'Access denied for this bot.' });
+  }
+
+  const stripeSecretKey = getStripeSecretKey();
+  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
+    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
+  }
+
+  try {
+    const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${stripeSecretKey}`
+      }
+    });
+    const data: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(502).json({ success: false, message: data?.error?.message || 'Unable to verify checkout session.' });
+    }
+    const metadata = data?.metadata || {};
+    const purchaseType = String(metadata?.purchase_type || '').trim();
+    const metaEmail = String(metadata?.user_email || '').trim().toLowerCase();
+    const metaBotId = String(metadata?.bot_id || '').trim();
+    const amountUsd = Math.max(0, Math.floor(Number(metadata?.amount_usd || 0)));
+    const paid = String(data?.payment_status || '').toLowerCase() === 'paid';
+    if (!paid || purchaseType !== 'credit_topup' || metaEmail !== email || metaBotId !== botId || amountUsd < 10) {
+      return res.status(400).json({ success: false, message: 'Checkout session is not eligible for credit top-up.' });
+    }
+
+    processedCreditSessions.add(sessionId);
+    const updated = addCreditToBot(botId, amountUsd);
+    persistBotState();
+    return res.json({
+      success: true,
+      botId,
+      creditedUsd: amountUsd,
+      remainingUsd: updated.remainingUsd,
+      depleted: updated.depleted
+    });
+  } catch {
+    return res.status(500).json({ success: false, message: 'Failed to confirm credit purchase.' });
   }
 });
 
