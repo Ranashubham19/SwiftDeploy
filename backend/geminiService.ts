@@ -13,9 +13,9 @@ const WEB_TIMEOUT_MS = 3500;
 const WEB_MAX_SNIPPETS = 5;
 const WEB_MAX_CHARS = 2500;
 const STRICT_TEMPORAL_GROUNDING = (process.env.STRICT_TEMPORAL_GROUNDING || 'true').toLowerCase() !== 'false';
-const ALWAYS_WEB_RETRIEVAL = (process.env.ALWAYS_WEB_RETRIEVAL || 'true').toLowerCase() !== 'false';
-const RETRIEVAL_CACHE_TTL_MS = 2 * 60 * 1000;
-const RETRIEVAL_MAX_QUERIES = 3;
+const ALWAYS_WEB_RETRIEVAL = (process.env.ALWAYS_WEB_RETRIEVAL || 'false').toLowerCase() !== 'false';
+const RETRIEVAL_CACHE_TTL_MS = 5 * 60 * 1000;
+const RETRIEVAL_MAX_QUERIES = 2;
 const retrievalCache = new Map<string, { docs: RetrievalDoc[]; expiresAt: number }>();
 
 const getSarvamKeys = (): string[] => {
@@ -67,6 +67,11 @@ const isReasoningHeavyQuery = (text: string): boolean => {
   return /(why|how|compare|tradeoff|strategy|architecture|math|calculate|proof|optimi[sz]e|plan|roadmap|estimate)/.test(q);
 };
 
+const needsLiveFacts = (text: string): boolean => {
+  const q = text.toLowerCase();
+  return /(latest|today|current|recent|now|as of|202[4-9]|price|market cap|gdp|revenue|stock|rank|top|news|update|who is|what is)/.test(q);
+};
+
 const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): string => {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
@@ -92,7 +97,9 @@ const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): s
     - Show key assumptions before conclusions for estimates.
     - Prefer structured answers with short bullets and clear numbers.
     - If confidence is low, say what is unknown and what data is needed.
-    - Keep output concise but complete.
+    - Keep output concise and include only what is necessary.
+    - Use retrieved web context only when directly relevant to the question.
+    - If context includes unrelated data, ignore it.
     ${temporalHint}
     ${customInstruction || ''}
   `;
@@ -187,8 +194,7 @@ const buildSearchQueries = (prompt: string): string[] => {
   const year = new Date().getUTCFullYear();
   const variants = [
     base,
-    `${base} latest ${year}`,
-    `${base} official data ${year}`
+    `${base} latest ${year}`
   ].map((x) => x.trim()).filter(Boolean);
   return Array.from(new Set(variants)).slice(0, RETRIEVAL_MAX_QUERIES);
 };
@@ -204,12 +210,15 @@ const rankDocs = (docs: RetrievalDoc[], prompt: string): RetrievalDoc[] => {
     if (/\b20(2[4-9]|3[0-9])\b/.test(text)) score += 2;
     return { d, score };
   });
-  return scored.sort((a, b) => b.score - a.score).map((x) => x.d);
+  return scored
+    .filter((x) => x.score >= 2)
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.d);
 };
 
 const buildWebGrounding = async (prompt: string): Promise<string> => {
   const enabled = (process.env.LIVE_GROUNDING_ENABLED || 'true').toLowerCase() !== 'false';
-  const shouldRetrieve = ALWAYS_WEB_RETRIEVAL || isTemporalQuery(prompt) || isReasoningHeavyQuery(prompt);
+  const shouldRetrieve = ALWAYS_WEB_RETRIEVAL || needsLiveFacts(prompt);
   if (!enabled || !shouldRetrieve) return '';
 
   const cacheKey = prompt.trim().toLowerCase();
