@@ -1076,13 +1076,18 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/^summary:\s*/i, '')
     .replace(/^next step:\s*/i, '')
     .replace(/^key points:\s*/i, '')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
-  // Improve readability in Telegram by expanding inline numbered steps into lines.
+  // Improve readability in Telegram by expanding list-like text into line-separated blocks.
   cleaned = cleaned
     .replace(/\s+([0-9]+)[\)\.]\s+/g, '\n$1. ')
-    .replace(/:\s*([0-9]+\.)\s/g, ':\n$1 ');
+    .replace(/:\s*([0-9]+\.)\s/g, ':\n$1 ')
+    .replace(/(?:^|\n)\s*[-*]\s+/g, '\n• ')
+    .replace(/\n?•\s*/g, '\n• ')
+    .replace(/\n?([0-9]+\.)\s+/g, '\n$1 ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   if (isGreetingPrompt(prompt)) {
     return 'Hello! How can I help you today?';
@@ -1104,6 +1109,8 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
   }
 
   cleaned = cleaned
+    .replace(/([^\n])\n(•\s)/g, '$1\n\n$2')
+    .replace(/([^\n])\n([0-9]+\.\s)/g, '$1\n\n$2')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return cleaned;
@@ -1112,7 +1119,17 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
 const ensureEmojiInReply = (text: string, prompt: string): string => {
   const value = String(text || '').trim();
   if (!value) return 'Got it.';
-  return value;
+  // Keep one contextual emoji for a premium, friendly tone without clutter.
+  if (/[\u{1F300}-\u{1FAFF}]/u.test(value)) return value;
+  const p = String(prompt || '').toLowerCase();
+  const emoji =
+    /(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p) ? '💻'
+    : /(math|calculate|equation|solve)/.test(p) ? '🧮'
+      : /(latest|today|current|news|market|price|as of)/.test(p) ? '🗓️'
+        : /(plan|goal|productivity|life|discipline|focus)/.test(p) ? '🎯'
+          : isGreetingPrompt(p) ? '👋'
+            : '✅';
+  return `${emoji} ${value}`;
 };
 
 const stripReconnectLoopReply = (text: string): string => {
