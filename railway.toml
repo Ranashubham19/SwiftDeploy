@@ -9,7 +9,9 @@ TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @
 GOOGLE_CLIENT_ID = { required = true, description = "Google OAuth Client ID" }
 GOOGLE_CLIENT_SECRET = { required = true, description = "Google OAuth Client Secret" }
 SESSION_SECRET = { required = true, description = "Session secret for express-session" }
-AI_PROVIDER = { required = false, description = "Primary AI provider (sarvam/openrouter/openai/anthropic/gemini)" }
+AI_PROVIDER = { required = false, description = "Primary AI provider (gemini/sarvam/openrouter/openai/anthropic/moonshot)" }
+GEMINI_API_KEY = { required = false, description = "Google AI Studio API key for Gemini" }
+GEMINI_MODEL = { required = false, description = "Gemini model identifier (default: gemini-3-flash-preview)" }
 SARVAM_API_KEYS = { required = false, description = "Comma-separated Sarvam API keys for primary routing" }
 SARVAM_MODEL = { required = false, description = "Sarvam model identifier (default: sarvam-m)" }
 SARVAM_BASE_URL = { required = false, description = "Sarvam chat completions endpoint URL" }

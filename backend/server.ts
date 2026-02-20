@@ -349,6 +349,9 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'placeholder_client_id'
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'placeholder_client_secret';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'very_long_random_session_secret_for_dev_testing_only';
 const isProduction = process.env.NODE_ENV === 'production';
+const defaultPortFromEnv = (process.env.PORT || '4000').trim() || '4000';
+const derivedBaseUrl = (process.env.BASE_URL || '').trim()
+  || (isProduction && process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : `http://localhost:${defaultPortFromEnv}`);
 const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-bots.json')
@@ -381,7 +384,7 @@ app.get('/', (_req, res) => {
 
 const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+const BASE_URL = derivedBaseUrl.replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '18000', 10);
 
@@ -585,24 +588,17 @@ declare global {
  * Compliant with Hugging Face requirements
  */
 async function getAIResponse(userText: string): Promise<string> {
-  try {
-    if (!process.env.HUGGINGFACE_API_KEY) {
-      throw new Error('HUGGINGFACE_KEY_MISSING');
-    }
-    // Use Hugging Face service
-    const response = await huggingFaceService.generateResponse(userText, 
-      "You are the SimpleClaw AI assistant. You are a highly professional, accurate, and strategic AI agent. Your goal is to provide world-class technical and general assistance."
-    );
-
-    const safeResponse = String(response || '').trim();
-    if (!safeResponse) return 'No signal detected from Neural Backbone.';
-    if (safeResponse.toLowerCase().includes('huggingface_api_key')) {
-      throw new Error('HUGGINGFACE_KEY_MISSING');
-    }
-    return safeResponse;
-  } catch (error) {
-    throw error;
+  if (!process.env.HUGGINGFACE_API_KEY) {
+    return generateEmergencyReply(userText);
   }
+  // Always attempt fallback generation; the service already handles missing keys safely.
+  const response = await huggingFaceService.generateResponse(
+    userText,
+    "You are the SimpleClaw AI assistant. You are a highly professional, accurate, and strategic AI agent. Your goal is to provide world-class technical and general assistance."
+  );
+  const safeResponse = String(response || '').trim();
+  if (!safeResponse) return 'Hello! How can I help you today?';
+  return safeResponse;
 }
 
 const generateEmergencyReply = (messageText: string): string => {
@@ -618,7 +614,7 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(help|support|issue|error|problem)/.test(lower)) {
     return 'I can help. Please share the exact error text or screenshot details, and I will give a step-by-step fix. 🛠️';
   }
-  return `I received your message: "${text.slice(0, 220)}". I am reconnecting AI providers right now. Please retry in 10-20 seconds for full intelligent response. ⚡`;
+  return `I received your message: "${text.slice(0, 220)}". Please share a bit more detail and I will help step by step.`;
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -919,6 +915,19 @@ const ensureEmojiInReply = (text: string, prompt: string): string => {
   return value;
 };
 
+const stripReconnectLoopReply = (text: string): string => {
+  const value = String(text || '').trim();
+  if (!value) return value;
+  if (
+    /reconnect(ing)?\s+ai\s+providers/i.test(value)
+    || /please\s+retry\s+in\s+\d+\s*-\s*\d+\s*seconds/i.test(value)
+    || /please\s+retry\s+in\s+\d+\s*seconds/i.test(value)
+  ) {
+    return 'I am online and ready to help right now. Please ask your question again.';
+  }
+  return value;
+};
+
 const hasCapabilityBoilerplate = (text: string): boolean => {
   const value = String(text || '').toLowerCase();
   return /early access|limitations|knowledge cutoff|october 2023|no real-time data access|i'm currently at v\d/.test(value);
@@ -959,7 +968,7 @@ const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAG
 };
 
 const sendTelegramReply = async (targetBot: TelegramBot, chatId: number, text: string, replyTo?: number) => {
-  const safe = sanitizeForTelegram(text);
+  const safe = sanitizeForTelegram(stripReconnectLoopReply(text));
   const chunks = splitTelegramMessage(safe);
   for (let i = 0; i < chunks.length; i += 1) {
     await targetBot.sendMessage(chatId, chunks[i], i === 0 && replyTo ? { reply_to_message_id: replyTo } : {});
@@ -2861,4 +2870,5 @@ process.on('SIGINT', () => {
     console.log('Process terminated');
   });
 });
+
 
