@@ -807,15 +807,16 @@ const sanitizeForTelegram = (text: string): string => {
 
 const ensureEmojiInReply = (text: string, prompt: string): string => {
   const value = String(text || '').trim();
-  if (!value) return 'Got it 🙂';
+  if (!value) return 'Got it ??';
   const hasEmoji = /\p{Extended_Pictographic}/u.test(value);
   if (hasEmoji) return value;
 
   const p = String(prompt || '').toLowerCase();
-  const pick = p.includes('bye') || p.includes('good night') ? '👋'
-    : p.includes('hi') || p.includes('hello') ? '😊'
-      : p.includes('thanks') ? '🙏'
-        : '✨';
+  const pick = p.includes('bye') || p.includes('good night') ? '??'
+    : p.includes('hi') || p.includes('hello') ? '??'
+      : p.includes('thanks') ? '??'
+        : p.includes('error') || p.includes('issue') || p.includes('problem') ? '???'
+          : '?';
   return `${value} ${pick}`;
 };
 
@@ -2433,3 +2434,4 @@ process.on('SIGINT', () => {
     console.log('Process terminated');
   });
 });
+
