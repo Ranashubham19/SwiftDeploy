@@ -24,6 +24,7 @@ const MODEL_TOP_P = 0.8;
 const MODEL_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || (FAST_REPLY_MODE ? '800' : '1200'), 10);
 const HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const CHATGPT_52_MODE = (process.env.CHATGPT_52_MODE || 'true').trim().toLowerCase() !== 'false';
+const OPENROUTER_MAX_MODEL_ATTEMPTS = Math.max(1, parseInt(process.env.OPENROUTER_MAX_MODEL_ATTEMPTS || (FAST_REPLY_MODE ? '2' : '4'), 10) || 2);
 
 const REALTIME_KEYWORDS = ["2024", "2025", "2026", "today", "now", "current", "latest", "right now"];
 const REALTIME_INTENT_PATTERNS = /(richest|top\s+\d+|top company|best phone|prime minister|president|ceo|stock price|net worth|market cap|breaking news|rank(ing)?|leader|who is|what is the current)/;
@@ -346,6 +347,41 @@ const getProviderOrder = (preferredProvider: string, prompt: string): string[] =
   return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
 };
 
+const getOpenRouterPoolFromEnv = (): string[] => {
+  const csv = (process.env.OPENROUTER_MODELS || '').trim();
+  if (!csv) return [];
+  return csv
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+};
+
+const getOpenRouterIntentModels = (intent: IntentType): string[] => {
+  if (intent === 'coding') {
+    const csv = (process.env.OPENROUTER_MODELS_CODING || '').trim();
+    if (csv) return csv.split(',').map((m) => m.trim()).filter(Boolean);
+  }
+  if (intent === 'math') {
+    const csv = (process.env.OPENROUTER_MODELS_MATH || '').trim();
+    if (csv) return csv.split(',').map((m) => m.trim()).filter(Boolean);
+  }
+  if (intent === 'current_event') {
+    const csv = (process.env.OPENROUTER_MODELS_REALTIME || '').trim();
+    if (csv) return csv.split(',').map((m) => m.trim()).filter(Boolean);
+  }
+  const csv = (process.env.OPENROUTER_MODELS_GENERAL || '').trim();
+  if (csv) return csv.split(',').map((m) => m.trim()).filter(Boolean);
+  return [];
+};
+
+const getOpenRouterCandidateModels = (prompt: string): string[] => {
+  const intent = detectIntent(prompt);
+  const baseModel = (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim();
+  const intentModels = getOpenRouterIntentModels(intent);
+  const poolModels = getOpenRouterPoolFromEnv();
+  return Array.from(new Set([baseModel, ...intentModels, ...poolModels].filter(Boolean)));
+};
+
 const callOpenAI = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) {
@@ -488,45 +524,64 @@ const callOpenRouter = async (prompt: string, history: ChatHistory, systemInstru
     throw new Error('OPENROUTER_API_KEY_MISSING');
   }
 
-  const model = (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim();
+  const candidateModels = getOpenRouterCandidateModels(prompt);
+  const attempts = candidateModels.slice(0, OPENROUTER_MAX_MODEL_ATTEMPTS);
+  if (!attempts.length) {
+    throw new Error('OPENROUTER_MODEL_MISSING');
+  }
   const historyText = extractHistoryText(history);
   const baseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions').trim();
   const referer = (process.env.FRONTEND_URL || process.env.BASE_URL || '').trim();
+  let lastError: Error | null = null;
+  for (const model of attempts) {
+    try {
+      const body = {
+        model,
+        messages: [
+          ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+          ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
+          { role: 'user', content: prompt }
+        ],
+        temperature: MODEL_TEMPERATURE,
+        top_p: MODEL_TOP_P,
+        max_tokens: MODEL_MAX_TOKENS
+      };
 
-  const body = {
-    model,
-    messages: [
-      ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-      ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
-      { role: 'user', content: prompt }
-    ],
-    temperature: MODEL_TEMPERATURE,
-    top_p: MODEL_TOP_P,
-    max_tokens: MODEL_MAX_TOKENS
-  };
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(referer ? { 'HTTP-Referer': referer } : {}),
+          'X-Title': 'SwiftDeploy AI'
+        },
+        body: JSON.stringify(body)
+      });
 
-  const response = await fetch(baseUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      ...(referer ? { 'HTTP-Referer': referer } : {}),
-      'X-Title': 'SwiftDeploy AI'
-    },
-    body: JSON.stringify(body)
-  });
+      const data: any = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = data?.error?.message || data?.message || `OpenRouter request failed (${response.status})`;
+        const errorText = `OPENROUTER_ERROR: ${message}`;
+        // Auth and permission errors should fail fast; trying more models will not help.
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(errorText);
+        }
+        lastError = new Error(errorText);
+        continue;
+      }
 
-  const data: any = await response.json();
-  if (!response.ok) {
-    const message = data?.error?.message || data?.message || 'OpenRouter request failed';
-    throw new Error(`OPENROUTER_ERROR: ${message}`);
+      const text = data?.choices?.[0]?.message?.content;
+      if (!text || typeof text !== 'string') {
+        lastError = new Error('OPENROUTER_EMPTY_RESPONSE');
+        continue;
+      }
+      return text.trim();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
   }
 
-  const text = data?.choices?.[0]?.message?.content;
-  if (!text || typeof text !== 'string') {
-    throw new Error('OPENROUTER_EMPTY_RESPONSE');
-  }
-  return text.trim();
+  throw lastError || new Error('OPENROUTER_ROUTING_FAILED');
 };
 
 const callSarvam = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {

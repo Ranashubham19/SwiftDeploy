@@ -536,6 +536,7 @@ const verifyTelegramWebhookRequest = (req: express.Request, botId: string): bool
 
 const getActiveAiConfig = (): { provider: string; model: string } => {
   const provider = (process.env.AI_PROVIDER || 'moonshot').trim().toLowerCase();
+  const hasOpenRouterPool = Boolean((process.env.OPENROUTER_MODELS || '').trim());
   const model =
     provider === 'moonshot'
       ? (process.env.MOONSHOT_MODEL || 'moonshotai/kimi-k2.5').trim()
@@ -544,7 +545,7 @@ const getActiveAiConfig = (): { provider: string; model: string } => {
         : provider === 'anthropic'
           ? (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim()
           : provider === 'openrouter'
-            ? (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim()
+            ? (hasOpenRouterPool ? 'auto-router (intent-based)' : (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim())
             : provider === 'sarvam'
               ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
               : (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
