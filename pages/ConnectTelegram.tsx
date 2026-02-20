@@ -184,8 +184,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         <div className="w-full">
           <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-16 md:px-10 text-center">
             <div className="w-14 h-14 border-4 border-white/15 border-t-white rounded-full animate-spin mb-8 mx-auto"></div>
-            <p className="text-white text-4xl font-black tracking-tight">Pairing Telegram</p>
-            <p className="text-zinc-400 text-lg mt-4">Connecting your bot. Hang tight...</p>
+            <p className="text-zinc-100 text-3xl md:text-4xl font-semibold tracking-tight">Pairing Telegram</p>
+            <p className="text-zinc-400 text-base md:text-lg mt-4 font-medium">Connecting your bot. Hang tight...</p>
           </div>
         </div>
       );
@@ -365,14 +365,14 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         {isDeploying ? (
           <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-300 px-8 text-center">
             <div className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-8"></div>
-            <p className="text-xl font-black italic tracking-tighter text-white uppercase tracking-[0.15em] animate-pulse">
+            <p className="text-lg md:text-xl font-semibold tracking-[0.12em] text-zinc-100 uppercase">
               {deployStep === 'verifying'
                 ? 'Verifying token'
                 : deployStep === 'provisioning'
                   ? 'Starting your deployment'
                   : 'Pairing Telegram webhook'}
             </p>
-            <p className="text-zinc-500 text-xs font-bold mt-4 italic">Do not switch tabs. This only takes a few seconds.</p>
+            <p className="text-zinc-400 text-xs font-medium mt-4 tracking-wide">Do not switch tabs. This only takes a few seconds.</p>
           </div>
         ) : null}
 
