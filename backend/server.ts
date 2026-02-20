@@ -367,7 +367,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
-const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '45000', 10);
+const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '60000', 10);
 
 // Rate limiting configuration
 const authRateLimit = rateLimit({
@@ -829,6 +829,21 @@ const isTimeSensitivePrompt = (text: string): boolean => {
   return /(latest|today|current|recent|now|this year|202[4-9]|forecast|estimate|prediction|market|price|revenue|gdp|election|news)/.test(value);
 };
 
+const isComplexPrompt = (text: string): boolean => {
+  const value = String(text || '').toLowerCase();
+  return /(why|how|compare|strategy|analysis|estimate|forecast|roadmap|reason|explain|detailed|step by step)/.test(value) || value.length > 120;
+};
+
+const looksLowQualityAnswer = (answer: string, prompt: string): boolean => {
+  const out = String(answer || '').trim();
+  if (!out) return true;
+  if (hasCapabilityBoilerplate(out)) return true;
+  const lower = out.toLowerCase();
+  if (/i am reconnecting ai providers|please retry in 10-20 seconds/.test(lower)) return true;
+  if (isComplexPrompt(prompt) && out.length < 120) return true;
+  return false;
+};
+
 const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
@@ -894,8 +909,8 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       sanitizeForTelegram(response || 'No response generated.'),
       messageText
     );
-    if (hasCapabilityBoilerplate(clean)) {
-      const retryPrompt = `${messageText}\n\nAnswer the question directly. Do not include model limitations/cutoff boilerplate.`;
+    if (looksLowQualityAnswer(clean, messageText)) {
+      const retryPrompt = `${messageText}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
       const retry = await withTimeout(
         generateBotResponse(retryPrompt, undefined, history, systemPrompt),
         AI_RESPONSE_TIMEOUT_MS,
@@ -906,7 +921,9 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         messageText
       );
       appendChatHistory(chatId, messageText, retryClean);
-      aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      if (!timeSensitive) {
+        aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      }
       return retryClean;
     }
     appendChatHistory(chatId, messageText, clean);
@@ -917,6 +934,9 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
   } catch (error) {
     if (error instanceof Error && error.message.includes('LIVE_CONTEXT_UNAVAILABLE')) {
       return 'I cannot verify live current-year data right now. Please retry in a few seconds, and I will fetch fresh sources before answering.';
+    }
+    if (timeSensitive) {
+      return 'Live verification failed for this time-sensitive query. Please retry in a few seconds so I can return a current, source-grounded answer.';
     }
     console.error('[AI] Primary model failed, switching to fallback:', error);
     try {
@@ -930,7 +950,9 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         messageText
       );
       appendChatHistory(chatId, messageText, clean);
-      aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      if (!timeSensitive) {
+        aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      }
       return clean;
     } catch (fallbackError) {
       console.error('[AI] Fallback model failed:', fallbackError);
@@ -971,7 +993,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
 
   if (text === '/start') {
-    const welcome = "*SwiftDeploy Bot Active.*\n\nAI Model: Gemini 3 Pro\nStatus: Operational\n\nSend a message to start chatting with AI.";
+    const welcome = "*SwiftDeploy Bot Active.*\n\nAI Model: Kimi K2.5 (primary, with provider failover)\nStatus: Operational\n\nSend a message to start chatting with AI.";
     await botInstance.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
@@ -980,7 +1002,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   try {
     const startedAt = Date.now();
     await botInstance.sendChatAction(chatId, 'typing');
-    const aiReply = await generateProfessionalReply(text);
+    const aiReply = await generateProfessionalReply(text, chatId);
     await sendTelegramReply(botInstance, chatId, aiReply, msg.message_id);
     if (botId) recordBotResponse(botId, aiReply, Date.now() - startedAt);
   } catch (err) {

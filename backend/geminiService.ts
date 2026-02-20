@@ -72,6 +72,11 @@ const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): s
       - If the user asks about 2026 (or another year), do NOT substitute 2023/2024.
       - If real-time verification is required and unavailable, explicitly say so and provide a best-effort estimate with assumptions.
       - Never present uncertain facts as certain.
+      - For temporal/market/economic answers, include:
+        1) "As of" date,
+        2) core figures,
+        3) short assumptions,
+        4) a brief "Sources used" section from provided context.
     `
     : '';
 
