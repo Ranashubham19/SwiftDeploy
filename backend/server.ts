@@ -1134,6 +1134,14 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/\s{2,}/g, ' ')
     .trim();
 
+  // Remove 2024 references from final output as requested.
+  cleaned = cleaned
+    .replace(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+2024\b/gi, '')
+    .replace(/\b2024\b/g, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
   // Never truncate short prompts to one sentence.
   if (isSimplePrompt(prompt)) {
     const simpleSentences = toSentenceChunks(cleaned);
@@ -1153,6 +1161,20 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/([^\n])\n([0-9]+\.\s)/g, '$1\n\n$2')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+
+  // Add slight professional depth for very short plain-text answers.
+  if (!cleaned.includes('```')) {
+    const sentences = toSentenceChunks(cleaned);
+    if (sentences.length <= 1 && cleaned.length > 0) {
+      if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/i.test(prompt)) {
+        cleaned = `${cleaned} If you share your exact requirements, I can provide a production-ready version.`;
+      } else if (/(math|calculate|equation|solve|value|number|prime|pi)/i.test(prompt)) {
+        cleaned = `${cleaned} I can also show the derivation step-by-step if you want.`;
+      } else {
+        cleaned = `${cleaned} If you want, I can expand this with practical steps tailored to your goal.`;
+      }
+    }
+  }
 
   return cleaned;
 };
@@ -1587,10 +1609,10 @@ You are ${assistantDisplayName}, a high-quality professional assistant.
 Rules:
 - Prioritize accuracy over guessing.
 - Keep answers concise, clear, and practical.
-- Default to 2-4 clear sentences for normal questions; be brief only for pure one-line facts.
+- Default to 3-5 clear sentences for normal questions; be brief only for pure one-line facts.
 - Never hallucinate facts, links, or references.
 - If the question is ambiguous, ask one focused clarifying question.
-- For time-sensitive questions, prioritize current verified facts and avoid stale date boilerplate.
+- For time-sensitive questions, prioritize current verified facts and avoid stale date boilerplate or unnecessary old year mentions.
 - Use structured output only when it helps the user solve the task faster.
 ${modeBlock}
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
