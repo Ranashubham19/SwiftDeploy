@@ -980,6 +980,9 @@ const sanitizeForTelegram = (text: string): string => {
   return String(text || '')
     .replace(/\r/g, '')
     .replace(/\*\*/g, '')
+    .replace(/â€™/g, "'")
+    .replace(/â€“/g, '-')
+    .replace(/â€”/g, '-')
     .trim();
 };
 
@@ -1022,7 +1025,7 @@ const instantProfessionalReply = (text: string): string | null => {
     return 'AI is software that performs tasks requiring human-like intelligence, such as understanding language, reasoning, prediction, and decision support.';
   }
   if (/ready to control my life|control my life|fix my life|change my life/.test(q)) {
-    return 'Yes. Start now with this 24-hour reset: 1) choose one non-negotiable task and finish it today, 2) block distractions for 2 deep-work sessions (50/10), 3) sleep on time and write tomorrow’s top 3 tasks before bed.';
+    return 'Yes. Start now with this 24-hour reset: 1) choose one non-negotiable task and finish it today, 2) block distractions for 2 deep-work sessions (50/10), 3) sleep on time and write tomorrow\'s top 3 tasks before bed.';
   }
   if (/motivate me|motivation|i am lazy|procrastinating/.test(q)) {
     return 'Do not wait for motivation. Use action first: pick one 20-minute task, start a timer, finish it, then continue one more cycle.';
@@ -1073,7 +1076,13 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/^summary:\s*/i, '')
     .replace(/^next step:\s*/i, '')
     .replace(/^key points:\s*/i, '')
+    .replace(/\s{2,}/g, ' ')
     .trim();
+
+  // Improve readability in Telegram by expanding inline numbered steps into lines.
+  cleaned = cleaned
+    .replace(/\s+([0-9]+)[\)\.]\s+/g, '\n$1. ')
+    .replace(/:\s*([0-9]+\.)\s/g, ':\n$1 ');
 
   if (isGreetingPrompt(prompt)) {
     return 'Hello! How can I help you today?';
@@ -1088,6 +1097,15 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     const first = toSentenceChunks(cleaned)[0] || cleaned;
     return first;
   }
+
+  // If a long answer comes as one block, split by sentences for easier reading.
+  if (!cleaned.includes('\n') && cleaned.length > 220) {
+    cleaned = toSentenceChunks(cleaned).join('\n');
+  }
+
+  cleaned = cleaned
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
   return cleaned;
 };
 
