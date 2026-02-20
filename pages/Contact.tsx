@@ -215,7 +215,7 @@ const Contact: React.FC = () => {
                   <>
                     <span className="relative z-10">Send Message</span>
                     <svg className="w-5 h-5 relative z-10 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M13 5l7 7-7 7" />
                     </svg>
                   </>
                 )}
@@ -298,37 +298,6 @@ const Contact: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-6 border-t border-white/10">
-                <h4 className="text-lg font-black text-white mb-5 uppercase tracking-tight">
-                  Quick Links
-                </h4>
-                <div className="grid grid-cols-1 gap-3">
-                  <button
-                    onClick={() => document.getElementById('contact-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                    className="flex items-center gap-3 text-zinc-300 hover:text-white transition-colors font-semibold text-sm bg-[#0f1013] border border-white/10 rounded-xl px-4 py-3 text-left"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l9 6 9-6M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                    Get in Touch
-                  </button>
-                  <a href="https://docs.swiftdeploy.ai" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-zinc-300 hover:text-white transition-colors font-semibold text-sm bg-[#0f1013] border border-white/10 rounded-xl px-4 py-3">
-                    <ICONS.Documentation className="w-4 h-4" />
-                    Documentation
-                  </a>
-                  <a href="https://status.swiftdeploy.ai" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-zinc-300 hover:text-white transition-colors font-semibold text-sm bg-[#0f1013] border border-white/10 rounded-xl px-4 py-3">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                    System Status
-                  </a>
-                  <button
-                    onClick={() => navigate('/login?mode=register')}
-                    className="flex items-center gap-3 text-zinc-300 hover:text-white transition-colors font-semibold text-sm bg-[#0f1013] border border-white/10 rounded-xl px-4 py-3 text-left"
-                  >
-                    <ICONS.Check className="w-4 h-4" />
-                    Get Started
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>
