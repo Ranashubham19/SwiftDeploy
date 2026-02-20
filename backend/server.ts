@@ -1125,6 +1125,15 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/\n{2,}(next step|summary|key points):[\s\S]*$/i, '')
     .trim();
 
+  // Remove stale temporal qualifiers like "as of May 2024" from final text.
+  cleaned = cleaned
+    .replace(/\s*\((?:as of|updated as of|data as of)\s+[a-z]+\s+\d{4}\)\s*/gi, ' ')
+    .replace(/\s*\((?:as of|updated as of|data as of)\s+\d{4}\)\s*/gi, ' ')
+    .replace(/\b(?:as of|updated as of|data as of)\s+[a-z]+\s+\d{4}\b[:,]?\s*/gi, '')
+    .replace(/\b(?:as of|updated as of|data as of)\s+\d{4}\b[:,]?\s*/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
   // Never truncate short prompts to one sentence.
   if (isSimplePrompt(prompt)) {
     const simpleSentences = toSentenceChunks(cleaned);
@@ -1153,11 +1162,15 @@ const ensureEmojiInReply = (text: string, prompt: string): string => {
   if (!value) return 'Got it.';
   // Keep one contextual emoji for a premium, friendly tone without clutter.
   if (/[\u{1F300}-\u{1FAFF}]/u.test(value)) return value;
-  const p = String(prompt || '').toLowerCase();
+  const p = `${String(prompt || '').toLowerCase()} ${value.toLowerCase()}`;
   const emoji =
     /(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p) ? '\u{1F4BB}'
     : /(math|calculate|equation|solve)/.test(p) ? '\u{1F9EE}'
-      : /(latest|today|current|news|market|price|as of)/.test(p) ? '\u{1F5D3}\uFE0F'
+      : /(finance|stock|market|price|revenue|gdp|trade|economy)/.test(p) ? '\u{1F4C8}'
+        : /(latest|today|current|news|update|breaking)/.test(p) ? '\u{1F4F0}'
+          : /(health|medical|fitness|diet|sleep)/.test(p) ? '\u{2695}\uFE0F'
+            : /(study|learn|education|exam|school|college)/.test(p) ? '\u{1F393}'
+              : /(travel|trip|flight|hotel|city|country)/.test(p) ? '\u{1F5FA}\uFE0F'
         : /(plan|goal|productivity|life|discipline|focus)/.test(p) ? '\u{1F3AF}'
           : isGreetingPrompt(p) ? '\u{1F44B}'
             : '\u2705';
@@ -1565,7 +1578,7 @@ const buildSystemPrompt = (
     : intent === 'math'
       ? `Mode: Math\n- Solve clearly and verify final result.`
       : intent === 'current_event'
-        ? `Mode: Current Event\n- Prefer verified live context.\n- State "As of" date.\n- If uncertain, say what is uncertain.`
+        ? `Mode: Current Event\n- Prefer verified live context.\n- Give direct, current answer without stale date boilerplate.\n- If uncertain, say what is uncertain.`
         : `Mode: General\n- Be clear, useful, and concise.`;
 
   const base = `
@@ -1574,9 +1587,10 @@ You are ${assistantDisplayName}, a high-quality professional assistant.
 Rules:
 - Prioritize accuracy over guessing.
 - Keep answers concise, clear, and practical.
+- Default to 2-4 clear sentences for normal questions; be brief only for pure one-line facts.
 - Never hallucinate facts, links, or references.
 - If the question is ambiguous, ask one focused clarifying question.
-- For time-sensitive questions, include "As of" date and avoid stale claims.
+- For time-sensitive questions, prioritize current verified facts and avoid stale date boilerplate.
 - Use structured output only when it helps the user solve the task faster.
 ${modeBlock}
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
