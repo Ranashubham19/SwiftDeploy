@@ -382,7 +382,16 @@ const authRateLimit = rateLimit({
 
 const billingRateLimit = rateLimit({
   windowMs: 60 * 1000,
-  max: 3,
+  max: 10,
+  keyGenerator: (req) => {
+    const reqUser = req.user as Express.User | undefined;
+    const email = (reqUser?.email || '').trim().toLowerCase();
+    if (email) {
+      return `billing:user:${email}`;
+    }
+    return `billing:ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+  },
+  skipSuccessfulRequests: true,
   message: {
     message: 'Too many checkout attempts. Please wait and try again.'
   },
