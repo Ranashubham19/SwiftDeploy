@@ -1145,7 +1145,7 @@ Rules:
 - Always give clear, structured answers.
 - If question involves current events, latest data, or specific year beyond training knowledge, indicate that live verification may be required.
 - Do not fabricate facts.
-- If unsure, say exactly: "I do not have enough verified information."
+- For general conversation prompts, answer directly and naturally.
 - Keep responses accurate and concise.
 - Use step-by-step reasoning when needed.
 - Avoid unnecessary fluff.
@@ -1232,6 +1232,16 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
     const fastGreeting = 'Hello! How can I help you today?';
     appendChatHistory(chatId, messageText, fastGreeting);
     return fastGreeting;
+  }
+  if (/(what('?s| is)\s+your\s+name|your name\??)/.test(normalizedPrompt)) {
+    const answer = 'I am SwiftDeploy AI assistant. I can help with coding, debugging, bot setup, deployment, and general questions.';
+    appendChatHistory(chatId, messageText, answer);
+    return answer;
+  }
+  if (/(what can you do|capabilities|how can you help|what do you do)/.test(normalizedPrompt)) {
+    const answer = 'I can answer questions, help fix code, troubleshoot deployment issues, and guide Telegram/Discord bot setup step by step.';
+    appendChatHistory(chatId, messageText, answer);
+    return answer;
   }
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
   const intent = detectIntent(messageText);

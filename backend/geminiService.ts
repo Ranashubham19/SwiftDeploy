@@ -111,7 +111,7 @@ const isReasoningHeavyQuery = (text: string): boolean => {
 
 const needsLiveFacts = (text: string): boolean => {
   const q = text.toLowerCase();
-  return /(latest|today|current|recent|now|as of|202[4-9]|price|market cap|gdp|revenue|stock|rank|top|news|update|who is|what is)/.test(q);
+  return /(latest|today|current|recent|now|as of|202[4-9]|price|market cap|gdp|revenue|stock|rank|top\s+\d+|news|update|election|breaking)/.test(q);
 };
 
 const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): string => {
@@ -162,7 +162,7 @@ Rules:
 - Always give clear, structured answers.
 - If question involves current events, latest data, or specific year beyond training knowledge, indicate that live verification may be required.
 - Do not fabricate facts.
-- If unsure, say: "I do not have enough verified information."
+- If a prompt is general/casual and ambiguous, ask a short clarifying question instead of refusing.
 - Keep responses accurate and concise.
 - Use step-by-step reasoning when needed.
 - Avoid unnecessary fluff.
