@@ -383,7 +383,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
-const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '60000', 10);
+const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '18000', 10);
 
 // Rate limiting configuration
 const authRateLimit = rateLimit({
@@ -873,44 +873,50 @@ const toSentenceChunks = (text: string): string[] => {
     .filter(Boolean);
 };
 
+const isGreetingPrompt = (text: string): boolean => {
+  const v = String(text || '').trim().toLowerCase();
+  return /^(hi|hii|hello|hey|yo|good morning|good afternoon|good evening)\b[!. ]*$/.test(v);
+};
+
+const isSimplePrompt = (text: string): boolean => {
+  const v = String(text || '').trim();
+  if (!v) return true;
+  if (v.length <= 40 && v.split(/\s+/).length <= 8) return true;
+  return false;
+};
+
 const formatProfessionalResponse = (text: string, prompt: string): string => {
   const raw = sanitizeForTelegram(text);
   if (!raw) return raw;
 
-  const cleaned = raw
+  let cleaned = raw
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+\n/g, '\n')
+    .replace(/^summary:\s*/i, '')
+    .replace(/^next step:\s*/i, '')
+    .replace(/^key points:\s*/i, '')
     .trim();
 
-  const hasStructure = /(summary:|key points:|next step:|action plan:|risks:)/i.test(cleaned);
-  if (hasStructure) return cleaned;
-
-  const complex = isComplexPrompt(prompt) || cleaned.length > 280;
-  const sentences = toSentenceChunks(cleaned);
-  const summary = sentences[0] || cleaned;
-  const bullets = sentences.slice(1, 5).map((s) => `- ${s}`);
-
-  if (!complex) {
-    return `Summary:\n${summary}\n\nNext Step:\n- Let me know if you want a deeper breakdown.`;
+  if (isGreetingPrompt(prompt)) {
+    return 'Hello! How can I help you today?';
   }
 
-  const keyPoints = bullets.length ? bullets.join('\n') : `- ${summary}`;
-  return `Summary:\n${summary}\n\nKey Points:\n${keyPoints}\n\nNext Step:\n- Tell me your exact goal and I will provide a precise action plan.`;
+  // Remove forced boilerplate sections and keep direct answer only.
+  cleaned = cleaned
+    .replace(/\n{2,}(next step|summary|key points):[\s\S]*$/i, '')
+    .trim();
+
+  if (isSimplePrompt(prompt)) {
+    const first = toSentenceChunks(cleaned)[0] || cleaned;
+    return first;
+  }
+  return cleaned;
 };
 
 const ensureEmojiInReply = (text: string, prompt: string): string => {
   const value = String(text || '').trim();
-  if (!value) return 'Got it ??';
-  const hasEmoji = /\p{Extended_Pictographic}/u.test(value);
-  if (hasEmoji) return value;
-
-  const p = String(prompt || '').toLowerCase();
-  const pick = p.includes('bye') || p.includes('good night') ? '??'
-    : p.includes('hi') || p.includes('hello') ? '??'
-      : p.includes('thanks') ? '??'
-        : p.includes('error') || p.includes('issue') || p.includes('problem') ? '???'
-          : '?';
-  return `${value} ${pick}`;
+  if (!value) return 'Got it.';
+  return value;
 };
 
 const hasCapabilityBoilerplate = (text: string): boolean => {
@@ -1210,6 +1216,11 @@ const selfVerifyAnswer = async (
 
 const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
   const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (isGreetingPrompt(normalizedPrompt)) {
+    const fastGreeting = 'Hello! How can I help you today?';
+    appendChatHistory(chatId, messageText, fastGreeting);
+    return fastGreeting;
+  }
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
   const intent = detectIntent(messageText);
   const realtimeSearchRequested = needsRealtimeSearch(messageText);
@@ -1257,7 +1268,8 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         messageText
       );
     }
-    if (looksLowQualityAnswer(clean, messageText) || looksSuspiciousResponse(messageText, clean)) {
+    const shouldRetry = !isSimplePrompt(messageText) && (looksLowQualityAnswer(clean, messageText) || looksSuspiciousResponse(messageText, clean));
+    if (shouldRetry) {
       const retryPrompt = `${messageText}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
       const retry = await withTimeout(
         generateBotResponse(retryPrompt, undefined, history, systemPrompt),
@@ -1269,7 +1281,7 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         retryPolished,
         messageText
       );
-      if (intent === 'current_event' || intent === 'coding' || intent === 'math') {
+      if (intent === 'current_event' && !isSimplePrompt(messageText)) {
         retryClean = ensureEmojiInReply(
           formatProfessionalResponse(await selfVerifyAnswer(messageText, retryClean, history, systemPrompt), messageText),
           messageText
@@ -1289,7 +1301,7 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       }));
       return retryClean;
     }
-    if (intent === 'current_event' || intent === 'coding' || intent === 'math') {
+    if (intent === 'current_event' && !isSimplePrompt(messageText)) {
       clean = ensureEmojiInReply(
         formatProfessionalResponse(await selfVerifyAnswer(messageText, clean, history, systemPrompt), messageText),
         messageText
