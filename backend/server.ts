@@ -92,12 +92,25 @@ const managedBotListeners = new Set<string>();
 const telegramBotOwners = new Map<string, string>();
 const telegramBotUsernames = new Map<string, string>();
 const telegramBotNames = new Map<string, string>();
+type BotCreditState = {
+  remainingUsd: number;
+  lastChargedAt: number;
+  depleted: boolean;
+  updatedAt: number;
+};
+const botCredits = new Map<string, BotCreditState>();
+const INITIAL_BOT_CREDIT_USD = Math.max(1, parseInt(process.env.BOT_INITIAL_CREDIT_USD || '10', 10));
+const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '120000', 10));
+const CREDIT_DEDUCT_AMOUNT_USD = Math.max(1, parseInt(process.env.BOT_CREDIT_DEDUCT_AMOUNT_USD || '1', 10));
 type TelegramBotConfig = {
   botId: string;
   botToken: string;
   ownerEmail: string;
   botUsername?: string;
   botName?: string;
+  creditRemainingUsd?: number;
+  creditLastChargedAt?: number;
+  creditDepleted?: boolean;
   createdAt: string;
 };
 type PersistedBotState = {
@@ -300,6 +313,40 @@ const recordBotError = (botId: string, error: unknown): void => {
   botTelemetry.set(botId, telemetry);
 };
 
+const ensureBotCreditState = (botId: string): BotCreditState => {
+  const existing = botCredits.get(botId);
+  if (existing) return existing;
+  const fresh: BotCreditState = {
+    remainingUsd: INITIAL_BOT_CREDIT_USD,
+    lastChargedAt: Date.now(),
+    depleted: false,
+    updatedAt: Date.now()
+  };
+  botCredits.set(botId, fresh);
+  return fresh;
+};
+
+const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditState => {
+  const state = ensureBotCreditState(botId);
+  if (state.depleted || state.remainingUsd <= 0) {
+    state.remainingUsd = 0;
+    state.depleted = true;
+    state.updatedAt = now;
+    botCredits.set(botId, state);
+    return state;
+  }
+  const elapsed = Math.max(0, now - state.lastChargedAt);
+  const steps = Math.floor(elapsed / CREDIT_DEDUCT_INTERVAL_MS);
+  if (steps <= 0) return state;
+  const deducted = steps * CREDIT_DEDUCT_AMOUNT_USD;
+  state.remainingUsd = Math.max(0, state.remainingUsd - deducted);
+  state.lastChargedAt += steps * CREDIT_DEDUCT_INTERVAL_MS;
+  state.depleted = state.remainingUsd <= 0;
+  state.updatedAt = now;
+  botCredits.set(botId, state);
+  return state;
+};
+
 const getBotIdByTelegramToken = (botToken: string): string | null => {
   for (const [id, token] of botTokens.entries()) {
     if (token === botToken) return id;
@@ -308,14 +355,20 @@ const getBotIdByTelegramToken = (botToken: string): string | null => {
 };
 
 const persistBotState = (): void => {
-  const telegramBots: TelegramBotConfig[] = Array.from(botTokens.entries()).map(([botId, botToken]) => ({
-    botId,
-    botToken,
-    ownerEmail: telegramBotOwners.get(botId) || '',
-    botUsername: telegramBotUsernames.get(botId) || undefined,
-    botName: telegramBotNames.get(botId) || undefined,
-    createdAt: new Date().toISOString()
-  }));
+  const telegramBots: TelegramBotConfig[] = Array.from(botTokens.entries()).map(([botId, botToken]) => {
+    const credit = applyCreditDecay(botId);
+    return {
+      botId,
+      botToken,
+      ownerEmail: telegramBotOwners.get(botId) || '',
+      botUsername: telegramBotUsernames.get(botId) || undefined,
+      botName: telegramBotNames.get(botId) || undefined,
+      creditRemainingUsd: credit.remainingUsd,
+      creditLastChargedAt: credit.lastChargedAt,
+      creditDepleted: credit.depleted,
+      createdAt: new Date().toISOString()
+    };
+  });
   const state: PersistedBotState = {
     version: 1,
     telegramBots,
@@ -909,6 +962,13 @@ const restorePersistedBots = async (): Promise<void> => {
     botTokens.set(botId, botToken);
     if (tg.botUsername) telegramBotUsernames.set(botId, String(tg.botUsername).trim());
     if (tg.botName) telegramBotNames.set(botId, String(tg.botName).trim());
+    botCredits.set(botId, {
+      remainingUsd: Math.max(0, Number(tg.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
+      lastChargedAt: Math.max(0, Number(tg.creditLastChargedAt ?? Date.now())),
+      depleted: Boolean(tg.creditDepleted) || Number(tg.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD) <= 0,
+      updatedAt: Date.now()
+    });
+    applyCreditDecay(botId);
     if (tg.ownerEmail) {
       telegramBotOwners.set(botId, tg.ownerEmail.trim().toLowerCase());
       ensureBotTelemetry(botId, 'TELEGRAM', tg.ownerEmail.trim().toLowerCase());
@@ -2113,6 +2173,21 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   const botId = getBotIdByTelegramToken(botToken);
 
   if (!text) return;
+  if (botId) {
+    const credit = applyCreditDecay(botId);
+    if (credit.depleted || credit.remainingUsd <= 0) {
+      const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
+      if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
+      await sendTelegramReply(
+        botInstance,
+        chatId,
+        '⚠️ You are out of credit limit. Recharge fast to continue with the AI bot.',
+        msg.message_id
+      );
+      persistBotState();
+      return;
+    }
+  }
   if (text.length > MAX_USER_PROMPT_LENGTH) {
     const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
     if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
@@ -2223,6 +2298,13 @@ app.post('/webhook/:botId', (req, res) => {
       botTokens.set(match.botId, match.botToken);
       if (match.botUsername) telegramBotUsernames.set(match.botId, String(match.botUsername).trim());
       if (match.botName) telegramBotNames.set(match.botId, String(match.botName).trim());
+      botCredits.set(match.botId, {
+        remainingUsd: Math.max(0, Number(match.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
+        lastChargedAt: Math.max(0, Number(match.creditLastChargedAt ?? Date.now())),
+        depleted: Boolean(match.creditDepleted) || Number(match.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD) <= 0,
+        updatedAt: Date.now()
+      });
+      applyCreditDecay(match.botId);
       if (match.ownerEmail) {
         telegramBotOwners.set(match.botId, match.ownerEmail.trim().toLowerCase());
         ensureBotTelemetry(match.botId, 'TELEGRAM', match.ownerEmail.trim().toLowerCase());
@@ -2395,6 +2477,12 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
     telegramBotOwners.set(botId, userEmail);
     if (botUsername) telegramBotUsernames.set(botId, botUsername);
     if (botName) telegramBotNames.set(botId, botName);
+    botCredits.set(botId, {
+      remainingUsd: INITIAL_BOT_CREDIT_USD,
+      lastChargedAt: Date.now(),
+      depleted: false,
+      updatedAt: Date.now()
+    });
     ensureBotTelemetry(botId, 'TELEGRAM', userEmail);
 
     if (!isProduction) {
@@ -2431,6 +2519,8 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
         botUsername: botUsername || null,
         botName: botName || null,
         telegramLink: botUsername ? `https://t.me/${botUsername}` : null,
+        creditRemainingUsd: botCredits.get(botId)?.remainingUsd ?? INITIAL_BOT_CREDIT_USD,
+        creditDepleted: botCredits.get(botId)?.depleted ?? false,
         aiProvider: aiConfig.provider,
         aiModel: aiConfig.model,
         aiModelLocked: true,
@@ -2443,6 +2533,7 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
       telegramBotOwners.delete(botId);
       telegramBotUsernames.delete(botId);
       telegramBotNames.delete(botId);
+      botCredits.delete(botId);
       persistBotState();
       console.error(`[DEPLOY] Failed to deploy bot ${botId}:`, webhookResult.error);
       res.status(500).json({ 
@@ -2690,11 +2781,16 @@ app.get('/bots', requireAuth, (req, res) => {
   const userEmail = (reqUser?.email || '').trim().toLowerCase();
   const telegramBots = Array.from(botTokens.entries())
     .filter(([id]) => String(telegramBotOwners.get(id) || '').trim().toLowerCase() === userEmail)
-    .map(([id, token]) => ({
-    id,
-    platform: 'TELEGRAM',
-    token: token.substring(0, 10) + '...' // Mask the token
-  }));
+    .map(([id, token]) => {
+      const credit = applyCreditDecay(id);
+      return {
+        id,
+        platform: 'TELEGRAM',
+        token: token.substring(0, 10) + '...', // Mask the token
+        creditRemainingUsd: credit.remainingUsd,
+        creditDepleted: credit.depleted
+      };
+    });
   const discordItems = Array.from(discordBots.entries())
     .filter(([, cfg]) => String(cfg.createdBy || '').trim().toLowerCase() === userEmail)
     .map(([id, cfg]) => ({
@@ -2705,6 +2801,28 @@ app.get('/bots', requireAuth, (req, res) => {
   }));
 
   res.json({ bots: [...telegramBots, ...discordItems] });
+});
+
+app.get('/bot-credit/:botId', requireAuth, (req, res) => {
+  const botId = String(req.params.botId || '').trim();
+  const reqUser = req.user as Express.User | undefined;
+  const userEmail = (reqUser?.email || '').trim().toLowerCase();
+  const owner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
+  if (!botId) {
+    return res.status(400).json({ success: false, message: 'botId is required' });
+  }
+  if (!owner || !userEmail || owner !== userEmail) {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  const credit = applyCreditDecay(botId);
+  persistBotState();
+  return res.json({
+    success: true,
+    botId,
+    remainingUsd: credit.remainingUsd,
+    depleted: credit.depleted,
+    warning: credit.depleted ? '⚠️ You are out of credit limit. Recharge fast to continue with the AI bot.' : ''
+  });
 });
 
 /**
@@ -3671,9 +3789,23 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   });
 });
 
+const creditDecayTimer = setInterval(() => {
+  let changed = false;
+  for (const botId of botTokens.keys()) {
+    const before = botCredits.get(botId)?.remainingUsd ?? INITIAL_BOT_CREDIT_USD;
+    const after = applyCreditDecay(botId).remainingUsd;
+    if (after !== before) changed = true;
+  }
+  if (changed) {
+    persistBotState();
+  }
+}, 30_000);
+creditDecayTimer.unref();
+
 // Graceful shutdown handling
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
+  clearInterval(creditDecayTimer);
   discordGatewayClients.forEach((client) => {
     try {
       client.destroy();
@@ -3687,6 +3819,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
+  clearInterval(creditDecayTimer);
   discordGatewayClients.forEach((client) => {
     try {
       client.destroy();

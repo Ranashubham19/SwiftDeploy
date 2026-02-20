@@ -13,6 +13,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const location = useLocation();
   const isSuccessStage = new URLSearchParams(location.search).get('stage') === 'success';
   const stageBotUsername = new URLSearchParams(location.search).get('bot') || '';
+  const stageBotId = new URLSearchParams(location.search).get('botId') || '';
   const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
 
   const [token, setToken] = useState('');
@@ -22,9 +23,13 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [deployError, setDeployError] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
   const [connectedBotUsername, setConnectedBotUsername] = useState(stageBotUsername);
+  const [connectedBotId, setConnectedBotId] = useState(stageBotId);
   const [connectedBotLink, setConnectedBotLink] = useState(stageBotLink);
   const [connectedAiProvider, setConnectedAiProvider] = useState('');
   const [connectedAiModel, setConnectedAiModel] = useState('');
+  const [remainingCreditUsd, setRemainingCreditUsd] = useState<number>(10);
+  const [isOutOfCredit, setIsOutOfCredit] = useState(false);
+  const [creditWarning, setCreditWarning] = useState('');
 
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -64,6 +69,29 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const generateDemoToken = () => {
     setToken('748291035:AAH_f9xS0v5k2m8Lp9qZ-rY7tW4u3i1o');
   };
+
+  useEffect(() => {
+    if (!isSuccessStage || !stageBotId) return;
+    let active = true;
+    const loadCredit = async () => {
+      try {
+        const response = await fetch(apiUrl(`/bot-credit/${encodeURIComponent(stageBotId)}`), {
+          credentials: 'include'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!active || !response.ok || !data?.success) return;
+        setRemainingCreditUsd(Number(data.remainingUsd || 0));
+        setIsOutOfCredit(Boolean(data.depleted));
+        setCreditWarning(String(data.warning || ''));
+      } catch {}
+    };
+    loadCredit();
+    const timer = window.setInterval(loadCredit, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [isSuccessStage, stageBotId]);
 
   const handleConnect = async () => {
     if (!token) return;
@@ -122,10 +150,14 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       };
 
       setBots([newBot, ...bots]);
+      setConnectedBotId(botId);
       setConnectedBotUsername(botUsername);
       setConnectedBotLink(telegramLink);
       setConnectedAiProvider(String(result.aiProvider || ''));
       setConnectedAiModel(String(result.aiModel || ''));
+      setRemainingCreditUsd(Number(result.creditRemainingUsd ?? 10));
+      setIsOutOfCredit(Boolean(result.creditDepleted));
+      setCreditWarning(Boolean(result.creditDepleted) ? '⚠️ You are out of credit limit. Recharge fast to continue with the AI bot.' : '');
       setShowConnectedToast(true);
       window.setTimeout(() => setShowConnectedToast(false), 4200);
       setFlowStep('send-first-message');
@@ -140,7 +172,11 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
   const confirmFirstMessage = async () => {
     setFlowStep('success');
-    const query = connectedBotUsername ? `?stage=success&bot=${encodeURIComponent(connectedBotUsername)}` : '?stage=success';
+    const params = new URLSearchParams();
+    params.set('stage', 'success');
+    if (connectedBotUsername) params.set('bot', connectedBotUsername);
+    if (connectedBotId) params.set('botId', connectedBotId);
+    const query = `?${params.toString()}`;
     navigate(`/connect/telegram${query}`, { replace: true });
   };
 
@@ -247,16 +283,24 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           </div>
 
           <div className="pt-2">
-            <p className="text-5xl md:text-6xl font-bold text-white/95 leading-none">$10</p>
+            <p className={`text-5xl md:text-6xl font-bold leading-none ${isOutOfCredit ? 'text-red-400' : 'text-white/95'}`}>${Math.max(0, remainingCreditUsd)}</p>
             <p className="text-zinc-400 mt-2 font-medium uppercase tracking-[0.12em] text-[11px]">Remaining credits</p>
+            {isOutOfCredit ? (
+              <p className="mt-3 text-red-400 font-black text-sm uppercase tracking-wide">
+                {'\u26A0\uFE0F'} You are out of credit limit. Recharge fast.
+              </p>
+            ) : null}
+            {!isOutOfCredit && creditWarning ? (
+              <p className="mt-3 text-amber-300 font-bold text-xs">{creditWarning}</p>
+            ) : null}
           </div>
 
           <div className="text-sm text-zinc-500 font-semibold">
-            $0 used today
+            ${Math.max(0, 10 - remainingCreditUsd)} used
             <span className="mx-2">•</span>
-            $0 used this month
+            Deducts $1 every 2 minutes
             <span className="mx-2">•</span>
-            $10 per month plan
+            $10 initial credit
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 max-w-[460px] mx-auto">
