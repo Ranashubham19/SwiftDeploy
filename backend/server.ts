@@ -393,11 +393,26 @@ const normalizeSecret = (raw: string): string => {
 };
 
 const getStripeSecretKey = (): string => {
-  return normalizeSecret(
+  const explicit = normalizeSecret(
     process.env.STRIPE_SECRET_KEY ||
     process.env.STRIPE_SECRET ||
     ''
   );
+  if (explicit.startsWith('sk_')) {
+    return explicit;
+  }
+
+  // Fallback: auto-detect misnamed Stripe secret variables in hosting dashboards.
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!/STRIPE/i.test(key)) continue;
+    if (!/(SECRET|KEY)/i.test(key)) continue;
+    const normalized = normalizeSecret(String(value || ''));
+    if (normalized.startsWith('sk_')) {
+      return normalized;
+    }
+  }
+
+  return explicit;
 };
 
 const billingRateLimit = rateLimit({
