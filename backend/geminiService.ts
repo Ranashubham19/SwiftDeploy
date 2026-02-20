@@ -9,7 +9,7 @@ type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 type RetrievalDoc = { title: string; snippet: string; url?: string; source: string };
 type IntentType = 'math' | 'current_event' | 'coding' | 'general';
 
-const MAX_HISTORY_TURNS = 8;
+const MAX_HISTORY_TURNS = 10;
 const WEB_TIMEOUT_MS = 3500;
 const WEB_MAX_SNIPPETS = 5;
 const WEB_MAX_CHARS = 2500;
@@ -23,10 +23,11 @@ const MODEL_TOP_P = 0.8;
 const MODEL_MAX_TOKENS = 1000;
 
 const REALTIME_KEYWORDS = ["2024", "2025", "2026", "today", "now", "current", "latest", "right now"];
+const REALTIME_INTENT_PATTERNS = /(richest|top\s+\d+|top company|best phone|prime minister|president|ceo|stock price|net worth|market cap|breaking news|rank(ing)?|leader|who is|what is the current)/;
 
 export const needsRealtimeSearch = (userMessage: string): boolean => {
   const msg = String(userMessage || '').toLowerCase();
-  return REALTIME_KEYWORDS.some((k) => msg.includes(k));
+  return REALTIME_KEYWORDS.some((k) => msg.includes(k)) || REALTIME_INTENT_PATTERNS.test(msg);
 };
 
 const detectIntent = (text: string): IntentType => {
@@ -82,6 +83,12 @@ const trimHistory = (history: ChatHistory): ChatHistory => {
   return history.slice(-MAX_HISTORY_TURNS);
 };
 
+const trimHistoryByIntent = (history: ChatHistory, intent: IntentType): ChatHistory => {
+  const windowSize = intent === 'current_event' ? 5 : MAX_HISTORY_TURNS;
+  if (!Array.isArray(history) || history.length <= windowSize) return history;
+  return history.slice(-windowSize);
+};
+
 const isTemporalQuery = (text: string): boolean => {
   const q = text.toLowerCase();
   return /(latest|today|current|recent|now|this year|202[4-9]|forecast|estimate|prediction|market|price|revenue|gdp|election|news)/.test(q);
@@ -128,6 +135,16 @@ For factual questions, use this format:
 [Only if real-time data was used]
 `;
 
+  const hardTruthMode = intent === 'current_event'
+    ? `
+Hard Truth Mode (Current Events):
+- You MUST use the provided verified data as ground truth.
+- Do NOT override verified data with model memory.
+- If data is insufficient, say exactly: "I do not have enough verified information."
+- State the date of the information.
+`
+    : '';
+
   return `
 You are a professional AI assistant.
 
@@ -146,6 +163,7 @@ Rules:
   - current_event: prioritize verified fresh context.
   - general: concise and factual.
 - Active intent: ${intent}
+${hardTruthMode}
 ${structureBlock}
 ${temporalHint}
 ${customInstruction || ''}
@@ -273,7 +291,7 @@ const buildWebGrounding = async (prompt: string): Promise<string> => {
   if (cached && cached.expiresAt > Date.now()) {
     const nowIso = new Date().toISOString();
     const cachedBody = cached.docs.map((d) => `${d.title}: ${d.snippet}${d.url ? ` (${d.url})` : ''} [${d.source}]`).join('\n- ');
-    return `\nLive context retrieved at ${nowIso}:\n- ${cachedBody}`.slice(0, WEB_MAX_CHARS);
+    return `\nVerified Data (retrieved at ${nowIso})\nYou MUST use the following verified data as ground truth. Do not override it with model memory.\n- ${cachedBody}`.slice(0, WEB_MAX_CHARS);
   }
 
   try {
@@ -297,7 +315,7 @@ const buildWebGrounding = async (prompt: string): Promise<string> => {
     retrievalCache.set(cacheKey, { docs: ranked, expiresAt: Date.now() + RETRIEVAL_CACHE_TTL_MS });
     const nowIso = new Date().toISOString();
     const body = ranked.map((d) => `${d.title}: ${d.snippet}${d.url ? ` (${d.url})` : ''} [${d.source}]`).join('\n- ');
-    return `\nLive context retrieved at ${nowIso}:\n- ${body}`.slice(0, WEB_MAX_CHARS);
+    return `\nVerified Data (retrieved at ${nowIso})\nYou MUST use the following verified data as ground truth. Do not override it with model memory.\n- ${body}`.slice(0, WEB_MAX_CHARS);
   } catch {
     return '';
   }
@@ -567,15 +585,16 @@ export const generateBotResponse = async (
 ): Promise<string> => {
   try {
     const sanitizedPrompt = prompt.trim();
-    const compactHistory = trimHistory(history);
+    const intent = detectIntent(sanitizedPrompt);
+    const compactHistory = trimHistoryByIntent(trimHistory(history), intent);
     const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
     const liveGrounding = await buildWebGrounding(sanitizedPrompt);
     if (STRICT_TEMPORAL_GROUNDING && isTemporalQuery(sanitizedPrompt) && !liveGrounding) {
       throw new Error('LIVE_CONTEXT_UNAVAILABLE');
     }
     const groundedPrompt = liveGrounding
-      ? `${sanitizedPrompt}\n\nUse this fresh web context when relevant and mention uncertainty when sources conflict.${liveGrounding}`
-      : sanitizedPrompt;
+      ? `${liveGrounding}\n\nCurrent User Question:\n${sanitizedPrompt}\n\nAnswer the question using the verified data above. If insufficient, say: "I do not have enough verified information."`
+      : `Current User Question:\n${sanitizedPrompt}`;
 
     const hasSarvam = getSarvamKeys().length > 0;
     const hasMoonshot = Boolean((process.env.MOONSHOT_API_KEY || '').trim());

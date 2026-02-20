@@ -128,6 +128,18 @@ const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-chat-memory.json')
     : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-chat-memory.json'));
+type UserProfile = {
+  preferredTone?: 'professional' | 'formal' | 'casual' | 'concise';
+  prefersConcise?: boolean;
+  recurringTopics: string[];
+  topicCounts: Record<string, number>;
+  updatedAt: number;
+};
+const userProfiles = new Map<number, UserProfile>();
+const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
+  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
+    : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-user-profiles.json'));
 const FREE_DEPLOY_LIMIT = 1;
 const FREE_TRIAL_DAYS = 7;
 type PlanType = 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
@@ -995,6 +1007,79 @@ const loadChatMemory = (): void => {
   }
 };
 
+const persistUserProfiles = (): void => {
+  try {
+    const dir = path.dirname(USER_PROFILE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const serialized = JSON.stringify(
+      Object.fromEntries(Array.from(userProfiles.entries()).map(([chatId, profile]) => [String(chatId), profile])),
+      null,
+      2
+    );
+    fs.writeFileSync(USER_PROFILE_FILE, serialized, 'utf8');
+  } catch (error) {
+    console.warn('[USER_PROFILE] Failed to persist profiles:', (error as Error).message);
+  }
+};
+
+const loadUserProfiles = (): void => {
+  try {
+    if (!fs.existsSync(USER_PROFILE_FILE)) return;
+    const raw = fs.readFileSync(USER_PROFILE_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, UserProfile>;
+    for (const [chatId, profile] of Object.entries(parsed || {})) {
+      const id = Number(chatId);
+      if (!Number.isFinite(id)) continue;
+      userProfiles.set(id, {
+        preferredTone: profile?.preferredTone,
+        prefersConcise: Boolean(profile?.prefersConcise),
+        recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
+        topicCounts: typeof profile?.topicCounts === 'object' && profile.topicCounts ? profile.topicCounts : {},
+        updatedAt: Number(profile?.updatedAt || Date.now())
+      });
+    }
+  } catch (error) {
+    console.warn('[USER_PROFILE] Failed to load profiles:', (error as Error).message);
+  }
+};
+
+const updateUserProfile = (chatId: number | undefined, userText: string): UserProfile | undefined => {
+  if (!chatId) return undefined;
+  const current = userProfiles.get(chatId) || {
+    recurringTopics: [],
+    topicCounts: {},
+    updatedAt: Date.now()
+  };
+  const text = String(userText || '').toLowerCase();
+  if (/(concise|short|brief)/.test(text)) {
+    current.prefersConcise = true;
+    current.preferredTone = 'concise';
+  } else if (/\bformal\b/.test(text)) {
+    current.preferredTone = 'formal';
+  } else if (/\bcasual\b/.test(text)) {
+    current.preferredTone = 'casual';
+  } else if (/\bprofessional\b/.test(text)) {
+    current.preferredTone = 'professional';
+  }
+
+  const stop = new Set(['what', 'when', 'where', 'which', 'about', 'with', 'this', 'that', 'have', 'from', 'your', 'please', 'tell', 'make', 'give']);
+  const topics = text
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 4 && !stop.has(t))
+    .slice(0, 12);
+  for (const topic of topics) {
+    current.topicCounts[topic] = (current.topicCounts[topic] || 0) + 1;
+  }
+  current.recurringTopics = Object.entries(current.topicCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([topic]) => topic);
+  current.updatedAt = Date.now();
+  userProfiles.set(chatId, current);
+  persistUserProfiles();
+  return current;
+};
+
 const appendChatHistory = (chatId: number | undefined, userText: string, modelText: string): void => {
   if (!chatId) return;
   const existing = getChatHistory(chatId);
@@ -1007,16 +1092,33 @@ const appendChatHistory = (chatId: number | undefined, userText: string, modelTe
   persistChatMemory();
 };
 
-const buildSystemPrompt = (): string => {
+const buildSystemPrompt = (
+  intent: 'math' | 'current_event' | 'coding' | 'general',
+  userProfile?: UserProfile
+): string => {
   const timezone = (process.env.BOT_USER_TIMEZONE || '').trim();
   const role = (process.env.BOT_USER_ROLE || '').trim();
   const priorities = (process.env.BOT_USER_PRIORITIES || '').trim();
 
-  const profile = [
+  const envProfile = [
     timezone ? `Timezone: ${timezone}` : '',
     role ? `User role: ${role}` : '',
     priorities ? `Top priorities: ${priorities}` : ''
   ].filter(Boolean).join('\n');
+
+  const profileHints = [
+    userProfile?.preferredTone ? `Preferred tone: ${userProfile.preferredTone}` : '',
+    userProfile?.prefersConcise ? 'User prefers concise answers.' : '',
+    userProfile?.recurringTopics?.length ? `Recurring topics: ${userProfile.recurringTopics.join(', ')}` : ''
+  ].filter(Boolean).join('\n');
+
+  const modeBlock = intent === 'coding'
+    ? `Mode: Coding\n- You are a senior software engineer.\n- Be precise and practical.\n- Include code only when needed.`
+    : intent === 'math'
+      ? `Mode: Math\n- Solve step-by-step.\n- Verify the final answer before responding.`
+      : intent === 'current_event'
+        ? `Mode: Current Event (Hard Truth)\n- You MUST use provided verified data as ground truth.\n- Do not override verified data with model memory.\n- State the date of information.\n- If data is insufficient, say exactly: "I do not have enough verified information."`
+        : `Mode: General\n- Keep answers clear, concise, and practical.`;
 
   const base = `
 You are a professional AI assistant.
@@ -1030,6 +1132,7 @@ Rules:
 - Use step-by-step reasoning when needed.
 - Avoid unnecessary fluff.
 - If user asks about year like 2024, 2025, 2026, treat it as time-sensitive.
+${modeBlock}
 
 Answer Format for factual questions:
 ### Direct Answer
@@ -1040,7 +1143,8 @@ Answer Format for factual questions:
 
 ### Source Context
 [If real-time data was used]
-${profile ? `\nUser profile:\n${profile}` : ''}
+${envProfile ? `\nUser profile:\n${envProfile}` : ''}
+${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
 `.trim();
   const custom = (process.env.BOT_SYSTEM_PROMPT || '').trim();
   return custom ? `${base}\n\nAdditional instructions:\n${custom}` : base;
@@ -1054,7 +1158,7 @@ const detectIntent = (text: string): 'math' | 'current_event' | 'coding' | 'gene
   if (/(code|typescript|javascript|python|sql|regex|debug|stack trace|api|function|class)/.test(value)) {
     return 'coding';
   }
-  if (needsRealtimeSearch(value) || isTimeSensitivePrompt(value)) {
+  if (needsRealtimeSearch(value) || isTimeSensitivePrompt(value) || /(richest|top company|best phone|prime minister|president|ceo|stock price|net worth|ranking|leader|breaking news)/.test(value)) {
     return 'current_event';
   }
   return 'general';
@@ -1084,6 +1188,26 @@ const looksSuspiciousResponse = (prompt: string, response: string): boolean => {
   return false;
 };
 
+const hasLowConfidenceMarkers = (response: string): boolean => {
+  const r = String(response || '').toLowerCase();
+  return /as of 2023|based on available data|i may be wrong|might be outdated|not sure|cannot confirm/.test(r);
+};
+
+const selfVerifyAnswer = async (
+  question: string,
+  draftAnswer: string,
+  history: BotChatTurn[],
+  systemPrompt: string
+): Promise<string> => {
+  const verifyPrompt = `Verify the following answer for factual consistency and correctness. If incorrect, return a corrected answer in the same professional structure.\n\nQuestion:\n${question}\n\nDraft Answer:\n${draftAnswer}\n\nReturn only the final corrected answer.`;
+  const verified = await withTimeout(
+    generateBotResponse(verifyPrompt, undefined, history, systemPrompt),
+    AI_RESPONSE_TIMEOUT_MS,
+    'AI verification timeout'
+  );
+  return String(verified || draftAnswer).trim();
+};
+
 const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
   const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
@@ -1100,7 +1224,8 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
     if (computed) return computed;
   }
 
-  const systemPrompt = buildSystemPrompt();
+  const userProfile = updateUserProfile(chatId, messageText);
+  const systemPrompt = buildSystemPrompt(intent, userProfile);
   const startedAt = Date.now();
   console.log('[AI_LOG] request', JSON.stringify({
     chatId: chatId || null,
@@ -1116,10 +1241,22 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       'AI response timeout'
     );
     const polished = formatProfessionalResponse(response || 'No response generated.', messageText);
-    const clean = ensureEmojiInReply(
+    let clean = ensureEmojiInReply(
       polished,
       messageText
     );
+    if ((intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
+      const strictRetryPrompt = `${messageText}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
+      const strictRetry = await withTimeout(
+        generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt),
+        AI_RESPONSE_TIMEOUT_MS,
+        'AI strict retry timeout'
+      );
+      clean = ensureEmojiInReply(
+        formatProfessionalResponse(strictRetry || clean, messageText),
+        messageText
+      );
+    }
     if (looksLowQualityAnswer(clean, messageText) || looksSuspiciousResponse(messageText, clean)) {
       const retryPrompt = `${messageText}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
       const retry = await withTimeout(
@@ -1128,10 +1265,16 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         'AI response timeout'
       );
       const retryPolished = formatProfessionalResponse(retry || clean, messageText);
-      const retryClean = ensureEmojiInReply(
+      let retryClean = ensureEmojiInReply(
         retryPolished,
         messageText
       );
+      if (intent === 'current_event' || intent === 'coding' || intent === 'math') {
+        retryClean = ensureEmojiInReply(
+          formatProfessionalResponse(await selfVerifyAnswer(messageText, retryClean, history, systemPrompt), messageText),
+          messageText
+        );
+      }
       appendChatHistory(chatId, messageText, retryClean);
       if (!timeSensitive) {
         aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
@@ -1145,6 +1288,12 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
         retried: true
       }));
       return retryClean;
+    }
+    if (intent === 'current_event' || intent === 'coding' || intent === 'math') {
+      clean = ensureEmojiInReply(
+        formatProfessionalResponse(await selfVerifyAnswer(messageText, clean, history, systemPrompt), messageText),
+        messageText
+      );
     }
     appendChatHistory(chatId, messageText, clean);
     if (!timeSensitive) {
@@ -2665,6 +2814,7 @@ process.on('uncaughtException', (error) => {
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://localhost:${PORT}`);
   loadChatMemory();
+  loadUserProfiles();
   restorePersistedBots().catch((error) => {
     console.warn('[BOT_STATE] Restore routine failed:', (error as Error).message);
   });
