@@ -9,18 +9,21 @@ type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 type RetrievalDoc = { title: string; snippet: string; url?: string; source: string };
 type IntentType = 'math' | 'current_event' | 'coding' | 'general';
 
-const MAX_HISTORY_TURNS = 10;
-const WEB_TIMEOUT_MS = 3500;
-const WEB_MAX_SNIPPETS = 5;
+const MAX_HISTORY_TURNS = parseInt(process.env.HISTORY_MAX_TURNS || '120', 10);
+const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'true').trim().toLowerCase() !== 'false';
+const WEB_TIMEOUT_MS = parseInt(process.env.WEB_TIMEOUT_MS || (FAST_REPLY_MODE ? '1800' : '3500'), 10);
+const WEB_MAX_SNIPPETS = parseInt(process.env.WEB_MAX_SNIPPETS || (FAST_REPLY_MODE ? '3' : '5'), 10);
 const WEB_MAX_CHARS = 2500;
-const STRICT_TEMPORAL_GROUNDING = (process.env.STRICT_TEMPORAL_GROUNDING || 'true').toLowerCase() !== 'false';
+const STRICT_TEMPORAL_GROUNDING = (process.env.STRICT_TEMPORAL_GROUNDING || 'false').toLowerCase() !== 'false';
 const ALWAYS_WEB_RETRIEVAL = (process.env.ALWAYS_WEB_RETRIEVAL || 'false').toLowerCase() !== 'false';
 const RETRIEVAL_CACHE_TTL_MS = 5 * 60 * 1000;
-const RETRIEVAL_MAX_QUERIES = 2;
+const RETRIEVAL_MAX_QUERIES = parseInt(process.env.RETRIEVAL_MAX_QUERIES || (FAST_REPLY_MODE ? '1' : '2'), 10);
 const retrievalCache = new Map<string, { docs: RetrievalDoc[]; expiresAt: number }>();
-const MODEL_TEMPERATURE = 0.2;
+const MODEL_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.25');
 const MODEL_TOP_P = 0.8;
-const MODEL_MAX_TOKENS = 1000;
+const MODEL_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || (FAST_REPLY_MODE ? '800' : '1200'), 10);
+const HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
+const CHATGPT_52_MODE = (process.env.CHATGPT_52_MODE || 'true').trim().toLowerCase() !== 'false';
 
 const REALTIME_KEYWORDS = ["2024", "2025", "2026", "today", "now", "current", "latest", "right now"];
 const REALTIME_INTENT_PATTERNS = /(richest|top\s+\d+|top company|best phone|prime minister|president|ceo|stock price|net worth|market cap|breaking news|rank(ing)?|leader|who is|what is the current)/;
@@ -93,10 +96,26 @@ const trimHistory = (history: ChatHistory): ChatHistory => {
   return history.slice(-MAX_HISTORY_TURNS);
 };
 
-const trimHistoryByIntent = (history: ChatHistory, intent: IntentType): ChatHistory => {
-  const windowSize = intent === 'current_event' ? 5 : MAX_HISTORY_TURNS;
-  if (!Array.isArray(history) || history.length <= windowSize) return history;
-  return history.slice(-windowSize);
+const historyTokens = (history: ChatHistory): number => {
+  return history.reduce((sum, entry) => {
+    const text = (entry.parts || []).map((p) => p.text || '').join(' ');
+    return sum + Math.ceil(text.length / 4);
+  }, 0);
+};
+
+const manageHistoryByTokens = (history: ChatHistory): ChatHistory => {
+  const turns = trimHistory(history);
+  if (!turns.length) return turns;
+  if (historyTokens(turns) <= HISTORY_TOKEN_BUDGET) return turns;
+  const kept: ChatHistory = [];
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    kept.unshift(turns[i]);
+    if (historyTokens(kept) > HISTORY_TOKEN_BUDGET) {
+      kept.shift();
+      break;
+    }
+  }
+  return kept;
 };
 
 const isTemporalQuery = (text: string): boolean => {
@@ -114,70 +133,21 @@ const needsLiveFacts = (text: string): boolean => {
   return /(latest|today|current|recent|now|as of|202[4-9]|price|market cap|gdp|revenue|stock|rank|top\s+\d+|news|update|election|breaking)/.test(q);
 };
 
-const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): string => {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const temporalHint = isTemporalQuery(prompt)
-    ? `
-      Temporal accuracy rules:
-      - Treat today's date as ${today}.
-      - If the user asks about 2026 (or another year), do NOT substitute 2023/2024.
-      - If real-time verification is required and unavailable, explicitly say so and provide a best-effort estimate with assumptions.
-      - Never present uncertain facts as certain.
-      - For temporal/market/economic answers, include:
-        1) "As of" date,
-        2) core figures,
-        3) short assumptions,
-        4) a brief "Sources used" section from provided context.
-    `
-    : '';
-
-  const intent = detectIntent(prompt);
-  const structureBlock = `
-For factual questions, use this format:
-### Direct Answer
-[Short answer]
-
-### Explanation
-[Brief explanation]
-
-### Source Context
-[Only if real-time data was used]
-`;
-
-  const hardTruthMode = intent === 'current_event'
-    ? `
-Hard Truth Mode (Current Events):
-- You MUST use the provided verified data as ground truth.
-- Do NOT override verified data with model memory.
-- If data is insufficient, say exactly: "I do not have enough verified information."
-- State the date of the information.
-`
-    : '';
-
-  return `
-You are a professional AI assistant.
+const buildSystemInstruction = (customInstruction?: string): string => {
+  const base = `
+You are SwiftDeploy AI, a GPT-5.2 style professional assistant.
+Be accurate, pragmatic, and multi-domain: coding, analysis, writing, math, strategy, and troubleshooting.
+Prioritize correct answers over confident guesses.
 
 Rules:
-- Always give clear, structured answers.
-- If question involves current events, latest data, or specific year beyond training knowledge, indicate that live verification may be required.
-- Do not fabricate facts.
-- If a prompt is general/casual and ambiguous, ask a short clarifying question instead of refusing.
-- Keep responses accurate and concise.
-- Use step-by-step reasoning when needed.
-- Avoid unnecessary fluff.
-- If user asks about year like 2024, 2025, 2026, treat it as time-sensitive.
-- Route behavior by intent:
-  - math: be exact, show steps briefly.
-  - coding: provide practical, executable guidance.
-  - current_event: prioritize verified fresh context.
-  - general: concise and factual.
-- Active intent: ${intent}
-${hardTruthMode}
-${structureBlock}
-${temporalHint}
-${customInstruction || ''}
+- Use full conversation context.
+- If unclear, ask a focused clarifying question.
+- For time-sensitive data, include an "As of" date.
+- Do not fabricate facts, citations, or capabilities.
+- Adapt depth to user intent: short for simple asks, detailed for complex asks.
+- For coding tasks, give production-grade solutions and mention tradeoffs briefly.
   `.trim();
+  return customInstruction ? `${base}\n\n${customInstruction.trim()}` : base;
 };
 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
@@ -306,15 +276,19 @@ const buildWebGrounding = async (prompt: string): Promise<string> => {
 
   try {
     const queries = buildSearchQueries(prompt);
-    const allDocs: RetrievalDoc[] = [];
-    for (const q of queries) {
-      const [duck, wiki, serper] = await Promise.all([
-        fetchDuckDuckGoContext(q).catch(() => []),
-        fetchWikipediaContext(q).catch(() => []),
-        fetchSerperContext(q).catch(() => [])
-      ]);
-      allDocs.push(...duck, ...wiki, ...serper);
-    }
+    const fetchDuck = !FAST_REPLY_MODE || (process.env.ENABLE_DUCK_RETRIEVAL || 'false').trim().toLowerCase() === 'true';
+    const fetchSerper = Boolean((process.env.SERPER_API_KEY || '').trim());
+    const queryResults = await Promise.all(
+      queries.map(async (q) => {
+        const [duck, wiki, serper] = await Promise.all([
+          fetchDuck ? fetchDuckDuckGoContext(q).catch(() => []) : Promise.resolve([] as RetrievalDoc[]),
+          fetchWikipediaContext(q).catch(() => []),
+          fetchSerper ? fetchSerperContext(q).catch(() => []) : Promise.resolve([] as RetrievalDoc[])
+        ]);
+        return [...duck, ...wiki, ...serper];
+      })
+    );
+    const allDocs: RetrievalDoc[] = queryResults.flat();
     const dedupMap = new Map<string, RetrievalDoc>();
     for (const doc of allDocs) {
       const key = `${doc.title}|${doc.snippet}`.toLowerCase();
@@ -334,6 +308,22 @@ const buildWebGrounding = async (prompt: string): Promise<string> => {
 const getProviderOrder = (preferredProvider: string, prompt: string): string[] => {
   const temporal = isTemporalQuery(prompt);
   const reasoningHeavy = isReasoningHeavyQuery(prompt);
+  if (CHATGPT_52_MODE) {
+    if (preferredProvider === 'openai') return ['openai', 'anthropic', 'openrouter', 'moonshot', 'sarvam', 'gemini'];
+    if (preferredProvider === 'anthropic') return ['openai', 'anthropic', 'openrouter', 'moonshot', 'sarvam', 'gemini'];
+    if (preferredProvider === 'openrouter') return ['openai', 'openrouter', 'anthropic', 'moonshot', 'sarvam', 'gemini'];
+    if (preferredProvider === 'moonshot') return ['openai', 'moonshot', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
+    if (preferredProvider === 'sarvam') return ['openai', 'sarvam', 'anthropic', 'openrouter', 'moonshot', 'gemini'];
+    return ['openai', 'anthropic', 'openrouter', 'moonshot', 'sarvam', 'gemini'];
+  }
+  if (FAST_REPLY_MODE) {
+    if (preferredProvider === 'gemini') return ['gemini', 'openai', 'openrouter', 'anthropic', 'moonshot', 'sarvam'];
+    if (preferredProvider === 'openai') return ['openai', 'gemini', 'openrouter', 'anthropic', 'moonshot', 'sarvam'];
+    if (preferredProvider === 'openrouter') return ['openrouter', 'gemini', 'openai', 'anthropic', 'moonshot', 'sarvam'];
+    if (preferredProvider === 'anthropic') return ['anthropic', 'gemini', 'openai', 'openrouter', 'moonshot', 'sarvam'];
+    if (preferredProvider === 'moonshot') return ['moonshot', 'gemini', 'openai', 'openrouter', 'anthropic', 'sarvam'];
+    if (preferredProvider === 'sarvam') return ['sarvam', 'gemini', 'openai', 'openrouter', 'anthropic', 'moonshot'];
+  }
 
   if (temporal || reasoningHeavy) {
     if (preferredProvider === 'moonshot') return ['moonshot', 'openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
@@ -606,15 +596,14 @@ export const generateBotResponse = async (
 ): Promise<string> => {
   try {
     const sanitizedPrompt = prompt.trim();
-    const intent = detectIntent(sanitizedPrompt);
-    const compactHistory = trimHistoryByIntent(trimHistory(history), intent);
-    const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
-    const liveGrounding = await buildWebGrounding(sanitizedPrompt);
+    const compactHistory = manageHistoryByTokens(history);
+    const adaptiveInstruction = buildSystemInstruction(systemInstruction);
+    const liveGrounding = isTemporalQuery(sanitizedPrompt) ? await buildWebGrounding(sanitizedPrompt) : '';
     if (STRICT_TEMPORAL_GROUNDING && isTemporalQuery(sanitizedPrompt) && !liveGrounding) {
       throw new Error('LIVE_CONTEXT_UNAVAILABLE');
     }
     const groundedPrompt = liveGrounding
-      ? `${liveGrounding}\n\nCurrent User Question:\n${sanitizedPrompt}\n\nAnswer the question using the verified data above. If insufficient, say: "I do not have enough verified information."`
+      ? `${liveGrounding}\n\nCurrent User Question:\n${sanitizedPrompt}\n\nUse the retrieved data carefully and state uncertainty if sources conflict.`
       : `Current User Question:\n${sanitizedPrompt}`;
 
     const hasSarvam = getSarvamKeys().length > 0;
@@ -622,9 +611,10 @@ export const generateBotResponse = async (
     const hasOpenAI = Boolean((process.env.OPENAI_API_KEY || '').trim());
     const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
     const explicitProvider = (process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const preferOpenAI = CHATGPT_52_MODE && hasOpenAI;
     const preferredProvider =
       explicitProvider
-      || (hasMoonshot ? 'moonshot' : hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
+      || (preferOpenAI ? 'openai' : hasMoonshot ? 'moonshot' : hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
     const providers = getProviderOrder(preferredProvider, sanitizedPrompt);
 
     let lastError: Error | null = null;

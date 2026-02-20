@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { randomUUID, verify as cryptoVerify } from 'crypto';
+import { randomUUID, verify as cryptoVerify, createHmac, timingSafeEqual } from 'crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
@@ -119,15 +119,25 @@ type BotTelemetry = {
 };
 const botTelemetry = new Map<string, BotTelemetry>();
 const aiResponseCache = new Map<string, { text: string; expiresAt: number }>();
+const aiInFlightRequests = new Map<string, Promise<string>>();
 type BotChatTurn = { role: 'user' | 'model'; parts: { text: string }[] };
-const chatHistoryStore = new Map<number, { history: BotChatTurn[]; updatedAt: number }>();
+const chatHistoryStore = new Map<string, { history: BotChatTurn[]; updatedAt: number }>();
 const CHAT_HISTORY_TTL_MS = 30 * 60 * 1000;
-const CHAT_HISTORY_MAX_TURNS = 10;
+const CHAT_HISTORY_MAX_TURNS = parseInt(process.env.CHAT_HISTORY_MAX_TURNS || '120', 10);
+const CHAT_HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
+const AI_CACHE_MAX_ENTRIES = parseInt(process.env.AI_CACHE_MAX_ENTRIES || '800', 10);
+const MAX_USER_PROMPT_LENGTH = parseInt(process.env.MAX_USER_PROMPT_LENGTH || '6000', 10);
 const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-chat-memory.json')
     : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-chat-memory.json'));
+type ContextMetric = { totalPromptTokens: number; totalResponseTokens: number; updatedAt: number };
+const contextMetrics = new Map<string, ContextMetric>();
+const CONTEXT_DB_FILE = (process.env.CONTEXT_DB_FILE || '').trim()
+  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-context-db.json')
+    : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-context-db.json'));
 type UserProfile = {
   preferredTone?: 'professional' | 'formal' | 'casual' | 'concise';
   prefersConcise?: boolean;
@@ -135,7 +145,7 @@ type UserProfile = {
   topicCounts: Record<string, number>;
   updatedAt: number;
 };
-const userProfiles = new Map<number, UserProfile>();
+const userProfiles = new Map<string, UserProfile>();
 const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
@@ -386,7 +396,16 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = derivedBaseUrl.replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
-const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || '90000', 10);
+const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'true').trim().toLowerCase() !== 'false';
+const AI_RESPONSE_TIMEOUT_MS = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || (FAST_REPLY_MODE ? '25000' : '60000'), 10);
+const AI_MAX_RETRY_PASSES = Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || (FAST_REPLY_MODE ? '0' : '1'), 10));
+const AI_ENABLE_STRICT_RETRY = (process.env.AI_ENABLE_STRICT_RETRY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
+const AI_ENABLE_SELF_VERIFY = (process.env.AI_ENABLE_SELF_VERIFY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
+const TELEGRAM_STREAMING_ENABLED = (process.env.TELEGRAM_STREAMING_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const TELEGRAM_STREAM_START_DELAY_MS = parseInt(process.env.TELEGRAM_STREAM_START_DELAY_MS || '700', 10);
+const TELEGRAM_STREAM_PROGRESS_INTERVAL_MS = parseInt(process.env.TELEGRAM_STREAM_PROGRESS_INTERVAL_MS || '3500', 10);
+const WEBHOOK_SECRET_MASTER = String(process.env.TELEGRAM_WEBHOOK_SECRET || SESSION_SECRET || '').trim();
+const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim();
 
 // Rate limiting configuration
 const authRateLimit = rateLimit({
@@ -453,6 +472,53 @@ const billingRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
+const webhookRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 150,
+  message: { message: 'Too many webhook requests' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const hasValidAdminKey = (req: express.Request): boolean => {
+  if (!ADMIN_API_KEY) return false;
+  const header = String(req.headers['x-admin-key'] || '').trim();
+  if (!header) return false;
+  try {
+    return timingSafeEqual(Buffer.from(header), Buffer.from(ADMIN_API_KEY));
+  } catch {
+    return false;
+  }
+};
+
+const requireAdminAccess = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.isAuthenticated?.() || hasValidAdminKey(req)) {
+    return next();
+  }
+  return res.status(403).json({ message: 'Admin access required' });
+};
+
+const buildTelegramWebhookSecret = (botId: string): string => {
+  if (!WEBHOOK_SECRET_MASTER) return '';
+  return createHmac('sha256', WEBHOOK_SECRET_MASTER)
+    .update(`telegram-webhook:${botId}`)
+    .digest('hex')
+    .slice(0, 48);
+};
+
+const verifyTelegramWebhookRequest = (req: express.Request, botId: string): boolean => {
+  if (!isProduction) return true;
+  const expected = buildTelegramWebhookSecret(botId);
+  if (!expected) return false;
+  const header = String(req.headers['x-telegram-bot-api-secret-token'] || '').trim();
+  if (!header) return false;
+  try {
+    return timingSafeEqual(Buffer.from(header), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+};
+
 // Middleware configuration
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -464,6 +530,7 @@ app.use('/send-verification', authRateLimit);
 app.use('/resend-verification', authRateLimit);
 app.use('/login', authRateLimit);
 app.use('/verify-email', authRateLimit);
+app.use('/webhook', webhookRateLimit);
 
 // Authentication middleware
 const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -560,7 +627,8 @@ declare global {
   }
 
   const webhookUrl = `${BASE_URL}/webhook/${botId}`;
-  const setWebhookUrl = `https://api.telegram.org/bot${botToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`;
+  const secretToken = buildTelegramWebhookSecret(botId);
+  const setWebhookUrl = `https://api.telegram.org/bot${botToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}${secretToken ? `&secret_token=${encodeURIComponent(secretToken)}` : ''}`;
   
   console.log(`[WEBHOOK] Setting webhook for bot ${botId}: ${webhookUrl}`);
   
@@ -604,18 +672,18 @@ async function getAIResponse(userText: string): Promise<string> {
 const generateEmergencyReply = (messageText: string): string => {
   const text = String(messageText || '').trim();
   const lower = text.toLowerCase();
-  if (!text) return 'Please send a message and I will help you right away. ✨';
+  if (!text) return 'Please send a message and I will help you right away.';
   if (/^(hi|hii|hello|hey)\b/.test(lower)) {
-    return 'Hi! I am online and ready to help. Ask me anything about your bot, deployment, or setup. 😊';
+    return 'Hi! I am online and ready to help. Ask me anything about your bot, deployment, or setup.';
   }
   if (/(how are you|how r u|how're you)/.test(lower)) {
     return 'I am doing well and ready to help. Tell me what you need and I will assist right away.';
   }
   if (/(bye|good ?night|good ?bye)/.test(lower)) {
-    return 'Goodbye! I will stay online 24/7 whenever you need help again. 👋';
+    return 'Goodbye. I will stay online 24/7 whenever you need help again.';
   }
   if (/(help|support|issue|error|problem)/.test(lower)) {
-    return 'I can help. Please share the exact error text or screenshot details, and I will give a step-by-step fix. 🛠️';
+    return 'I can help. Please share the exact error text or screenshot details, and I will give a step-by-step fix.';
   }
   return 'I am online and ready to help. Please ask your question again and I will answer directly.';
 };
@@ -710,7 +778,7 @@ const connectDiscordGatewayClient = async (botId: string, botToken: string): Pro
     try {
       const startedAt = Date.now();
       await interaction.deferReply();
-      const answer = await generateProfessionalReply(question);
+      const answer = await generateProfessionalReply(question, interaction.user?.id, `discord:${botId}:slash`);
       const chunks = answer.match(/[\s\S]{1,1900}/g) || [];
       await interaction.editReply(chunks[0] || 'No response generated.');
       for (let i = 1; i < chunks.length; i += 1) {
@@ -751,7 +819,7 @@ const connectDiscordGatewayClient = async (botId: string, botToken: string): Pro
         const startedAt = Date.now();
         recordBotIncoming(botId);
         await message.channel.sendTyping();
-        const answer = await generateProfessionalReply(prompt);
+        const answer = await generateProfessionalReply(prompt, message.author?.id, `discord:${botId}:message`);
         const chunks = answer.match(/[\s\S]{1,1900}/g) || [];
         await message.reply(chunks[0] || 'No response generated.');
         for (let i = 1; i < chunks.length; i += 1) {
@@ -827,6 +895,18 @@ const restorePersistedBots = async (): Promise<void> => {
   console.log(`[BOT_STATE] Restored ${state.telegramBots.length} Telegram and ${state.discordBots.length} Discord deployments`);
 };
 
+const getPersistedTelegramOwner = (botId: string): string => {
+  const state = loadPersistedBotState();
+  const item = state.telegramBots.find((b) => String(b.botId || '').trim() === botId);
+  return String(item?.ownerEmail || '').trim().toLowerCase();
+};
+
+const getPersistedDiscordOwner = (botId: string): string => {
+  const state = loadPersistedBotState();
+  const item = state.discordBots.find((b) => String(b.botId || '').trim() === botId);
+  return String(item?.createdBy || '').trim().toLowerCase();
+};
+
 const sendDiscordFollowUp = async (
   applicationId: string,
   interactionToken: string,
@@ -843,7 +923,8 @@ const sendDiscordFollowUp = async (
 const ensurePrimaryTelegramWebhook = async (): Promise<void> => {
   if (!isProduction || !TELEGRAM_TOKEN) return;
   const webhookUrl = `${BASE_URL}/webhook`;
-  const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`;
+  const secretToken = buildTelegramWebhookSecret('primary');
+  const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}${secretToken ? `&secret_token=${encodeURIComponent(secretToken)}` : ''}`;
   try {
     const response = await fetch(registerUrl);
     const data: any = await response.json().catch(() => ({}));
@@ -978,12 +1059,150 @@ const sendTelegramReply = async (targetBot: TelegramBot, chatId: number, text: s
   }
 };
 
-const getChatHistory = (chatId?: number): BotChatTurn[] => {
-  if (!chatId) return [];
-  const entry = chatHistoryStore.get(chatId);
+const sendTelegramStreamingReply = async (
+  targetBot: TelegramBot,
+  chatId: number,
+  responsePromise: Promise<string>,
+  replyTo?: number
+): Promise<string> => {
+  if (!TELEGRAM_STREAMING_ENABLED) {
+    const resolved = await responsePromise;
+    await sendTelegramReply(targetBot, chatId, resolved, replyTo);
+    return resolved;
+  }
+
+  const progressFrames = [
+    'Thinking...',
+    'Analyzing your request...',
+    'Preparing a high-quality response...'
+  ];
+  let frameIndex = 0;
+  let placeholderMessageId: number | null = null;
+  let progressInterval: NodeJS.Timeout | null = null;
+  let awaiting = true;
+
+  const startPlaceholderTimer = setTimeout(async () => {
+    if (!awaiting) return;
+    try {
+      const placeholder = await targetBot.sendMessage(
+        chatId,
+        progressFrames[0],
+        replyTo ? { reply_to_message_id: replyTo } : {}
+      );
+      placeholderMessageId = placeholder.message_id;
+      progressInterval = setInterval(async () => {
+        if (!awaiting || placeholderMessageId === null) return;
+        frameIndex = (frameIndex + 1) % progressFrames.length;
+        try {
+          await targetBot.editMessageText(progressFrames[frameIndex], {
+            chat_id: chatId,
+            message_id: placeholderMessageId
+          });
+        } catch {
+          // Ignore transient Telegram edit failures while waiting.
+        }
+      }, TELEGRAM_STREAM_PROGRESS_INTERVAL_MS);
+    } catch {
+      // Ignore placeholder failures and continue with final response send.
+    }
+  }, TELEGRAM_STREAM_START_DELAY_MS);
+
+  try {
+    const resolved = await responsePromise;
+    awaiting = false;
+    clearTimeout(startPlaceholderTimer);
+    if (progressInterval) clearInterval(progressInterval);
+
+    const safe = sanitizeForTelegram(stripReconnectLoopReply(resolved));
+    const chunks = splitTelegramMessage(safe);
+    if (placeholderMessageId !== null) {
+      try {
+        await targetBot.editMessageText(chunks[0] || 'No response generated.', {
+          chat_id: chatId,
+          message_id: placeholderMessageId
+        });
+        for (let i = 1; i < chunks.length; i += 1) {
+          await targetBot.sendMessage(chatId, chunks[i]);
+        }
+      } catch {
+        await sendTelegramReply(targetBot, chatId, resolved, replyTo);
+      }
+    } else {
+      await sendTelegramReply(targetBot, chatId, resolved, replyTo);
+    }
+    return resolved;
+  } catch (error) {
+    awaiting = false;
+    clearTimeout(startPlaceholderTimer);
+    if (progressInterval) clearInterval(progressInterval);
+    throw error;
+  }
+};
+
+const buildConversationKey = (scope: string, chatIdentity?: string | number): string | null => {
+  if (chatIdentity === undefined || chatIdentity === null) return null;
+  const id = String(chatIdentity).trim();
+  if (!id) return null;
+  return `${scope}:${id}`;
+};
+
+const pruneAiResponseCache = (): void => {
+  const now = Date.now();
+  for (const [key, value] of aiResponseCache.entries()) {
+    if (value.expiresAt <= now) {
+      aiResponseCache.delete(key);
+    }
+  }
+  const overflow = aiResponseCache.size - AI_CACHE_MAX_ENTRIES;
+  if (overflow > 0) {
+    const keysToDrop = Array.from(aiResponseCache.keys()).slice(0, overflow);
+    for (const key of keysToDrop) {
+      aiResponseCache.delete(key);
+    }
+  }
+};
+
+const clearConversationState = (conversationKey: string): void => {
+  chatHistoryStore.delete(conversationKey);
+  contextMetrics.delete(conversationKey);
+  userProfiles.delete(conversationKey);
+  for (const key of aiResponseCache.keys()) {
+    if (key.startsWith(`${conversationKey}:`)) {
+      aiResponseCache.delete(key);
+    }
+  }
+  for (const key of aiInFlightRequests.keys()) {
+    if (key.startsWith(`${conversationKey}:`)) {
+      aiInFlightRequests.delete(key);
+    }
+  }
+  persistChatMemory();
+  persistContextMetrics();
+  persistUserProfiles();
+};
+
+const getCommandReply = (messageText: string, conversationKey?: string): string | null => {
+  const text = String(messageText || '').trim();
+  const cmd = text.match(/^\/([a-z]+)(?:@\w+)?\b/i)?.[1]?.toLowerCase();
+  if (!cmd) return null;
+  if (cmd === 'help') {
+    return 'Commands:\n/start - welcome message\n/help - show commands\n/reset - clear chat memory\n\nAsk any question directly after these commands.';
+  }
+  if (cmd === 'reset') {
+    if (conversationKey) {
+      clearConversationState(conversationKey);
+    }
+    return 'Your chat memory for this bot has been cleared. Start a new question.';
+  }
+  return null;
+};
+
+const getChatHistory = (conversationKey?: string): BotChatTurn[] => {
+  if (!conversationKey) return [];
+  const entry = chatHistoryStore.get(conversationKey);
   if (!entry) return [];
   if (Date.now() - entry.updatedAt > CHAT_HISTORY_TTL_MS) {
-    chatHistoryStore.delete(chatId);
+    chatHistoryStore.delete(conversationKey);
     return [];
   }
   return entry.history;
@@ -1011,17 +1230,61 @@ const loadChatMemory = (): void => {
     if (!fs.existsSync(CHAT_MEMORY_FILE)) return;
     const raw = fs.readFileSync(CHAT_MEMORY_FILE, 'utf8');
     const parsed = JSON.parse(raw) as Record<string, { history: BotChatTurn[]; updatedAt: number }>;
-    for (const [chatId, entry] of Object.entries(parsed || {})) {
-      const id = Number(chatId);
-      if (!Number.isFinite(id)) continue;
+    for (const [storedKey, entry] of Object.entries(parsed || {})) {
+      const legacyChatId = Number(storedKey);
+      const conversationKey = storedKey.includes(':')
+        ? storedKey
+        : Number.isFinite(legacyChatId)
+          ? buildConversationKey('telegram:primary', legacyChatId)
+          : null;
+      if (!conversationKey) continue;
       const history = Array.isArray(entry?.history) ? entry.history.slice(-CHAT_HISTORY_MAX_TURNS) : [];
       const updatedAt = Number(entry?.updatedAt || 0);
       if (!history.length) continue;
       if (updatedAt && Date.now() - updatedAt > CHAT_HISTORY_TTL_MS) continue;
-      chatHistoryStore.set(id, { history, updatedAt: updatedAt || Date.now() });
+      chatHistoryStore.set(conversationKey, { history, updatedAt: updatedAt || Date.now() });
     }
   } catch (error) {
     console.warn('[CHAT_MEMORY] Failed to load chat memory:', (error as Error).message);
+  }
+};
+
+const persistContextMetrics = (): void => {
+  try {
+    const dir = path.dirname(CONTEXT_DB_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const serialized = JSON.stringify(
+      Object.fromEntries(Array.from(contextMetrics.entries()).map(([chatId, metric]) => [String(chatId), metric])),
+      null,
+      2
+    );
+    fs.writeFileSync(CONTEXT_DB_FILE, serialized, 'utf8');
+  } catch (error) {
+    console.warn('[CONTEXT_DB] Failed to persist context metrics:', (error as Error).message);
+  }
+};
+
+const loadContextMetrics = (): void => {
+  try {
+    if (!fs.existsSync(CONTEXT_DB_FILE)) return;
+    const raw = fs.readFileSync(CONTEXT_DB_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, ContextMetric>;
+    for (const [storedKey, metric] of Object.entries(parsed || {})) {
+      const legacyChatId = Number(storedKey);
+      const conversationKey = storedKey.includes(':')
+        ? storedKey
+        : Number.isFinite(legacyChatId)
+          ? buildConversationKey('telegram:primary', legacyChatId)
+          : null;
+      if (!conversationKey) continue;
+      contextMetrics.set(conversationKey, {
+        totalPromptTokens: Number(metric?.totalPromptTokens || 0),
+        totalResponseTokens: Number(metric?.totalResponseTokens || 0),
+        updatedAt: Number(metric?.updatedAt || Date.now())
+      });
+    }
+  } catch (error) {
+    console.warn('[CONTEXT_DB] Failed to load context metrics:', (error as Error).message);
   }
 };
 
@@ -1045,10 +1308,15 @@ const loadUserProfiles = (): void => {
     if (!fs.existsSync(USER_PROFILE_FILE)) return;
     const raw = fs.readFileSync(USER_PROFILE_FILE, 'utf8');
     const parsed = JSON.parse(raw) as Record<string, UserProfile>;
-    for (const [chatId, profile] of Object.entries(parsed || {})) {
-      const id = Number(chatId);
-      if (!Number.isFinite(id)) continue;
-      userProfiles.set(id, {
+    for (const [storedKey, profile] of Object.entries(parsed || {})) {
+      const legacyChatId = Number(storedKey);
+      const conversationKey = storedKey.includes(':')
+        ? storedKey
+        : Number.isFinite(legacyChatId)
+          ? buildConversationKey('telegram:primary', legacyChatId)
+          : null;
+      if (!conversationKey) continue;
+      userProfiles.set(conversationKey, {
         preferredTone: profile?.preferredTone,
         prefersConcise: Boolean(profile?.prefersConcise),
         recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
@@ -1061,9 +1329,9 @@ const loadUserProfiles = (): void => {
   }
 };
 
-const updateUserProfile = (chatId: number | undefined, userText: string): UserProfile | undefined => {
-  if (!chatId) return undefined;
-  const current = userProfiles.get(chatId) || {
+const updateUserProfile = (conversationKey: string | undefined, userText: string): UserProfile | undefined => {
+  if (!conversationKey) return undefined;
+  const current = userProfiles.get(conversationKey) || {
     recurringTopics: [],
     topicCounts: {},
     updatedAt: Date.now()
@@ -1093,20 +1361,20 @@ const updateUserProfile = (chatId: number | undefined, userText: string): UserPr
     .slice(0, 5)
     .map(([topic]) => topic);
   current.updatedAt = Date.now();
-  userProfiles.set(chatId, current);
+  userProfiles.set(conversationKey, current);
   persistUserProfiles();
   return current;
 };
 
-const appendChatHistory = (chatId: number | undefined, userText: string, modelText: string): void => {
-  if (!chatId) return;
-  const existing = getChatHistory(chatId);
+const appendChatHistory = (conversationKey: string | undefined, userText: string, modelText: string): void => {
+  if (!conversationKey) return;
+  const existing = getChatHistory(conversationKey);
   const next: BotChatTurn[] = [
     ...existing,
     { role: 'user' as const, parts: [{ text: userText }] },
     { role: 'model' as const, parts: [{ text: modelText }] }
   ].slice(-CHAT_HISTORY_MAX_TURNS);
-  chatHistoryStore.set(chatId, { history: next, updatedAt: Date.now() });
+  chatHistoryStore.set(conversationKey, { history: next, updatedAt: Date.now() });
   persistChatMemory();
 };
 
@@ -1131,36 +1399,23 @@ const buildSystemPrompt = (
   ].filter(Boolean).join('\n');
 
   const modeBlock = intent === 'coding'
-    ? `Mode: Coding\n- You are a senior software engineer.\n- Be precise and practical.\n- Include code only when needed.`
+    ? `Mode: Coding\n- Act like a senior engineer.\n- Prioritize correct, runnable solutions.\n- Keep explanations tight and practical.`
     : intent === 'math'
-      ? `Mode: Math\n- Solve step-by-step.\n- Verify the final answer before responding.`
+      ? `Mode: Math\n- Solve clearly and verify final result.`
       : intent === 'current_event'
-        ? `Mode: Current Event (Hard Truth)\n- You MUST use provided verified data as ground truth.\n- Do not override verified data with model memory.\n- State the date of information.\n- If data is insufficient, say exactly: "I do not have enough verified information."`
-        : `Mode: General\n- Keep answers clear, concise, and practical.`;
+        ? `Mode: Current Event\n- Prefer verified live context.\n- State "As of" date.\n- If uncertain, say what is uncertain.`
+        : `Mode: General\n- Be clear, useful, and concise.`;
 
   const base = `
-You are a professional AI assistant.
+You are SwiftDeploy AI, a GPT-5.2 style professional assistant.
 
 Rules:
-- Always give clear, structured answers.
-- If question involves current events, latest data, or specific year beyond training knowledge, indicate that live verification may be required.
-- Do not fabricate facts.
-- For general conversation prompts, answer directly and naturally.
-- Keep responses accurate and concise.
-- Use step-by-step reasoning when needed.
-- Avoid unnecessary fluff.
-- If user asks about year like 2024, 2025, 2026, treat it as time-sensitive.
+- Give direct, accurate answers first.
+- Use conversational tone by default; use structure only when it helps.
+- Do not invent facts or sources.
+- For time-sensitive questions, include current-year handling and "As of" date.
+- For complex tasks, provide actionable steps.
 ${modeBlock}
-
-Answer Format for factual questions:
-### Direct Answer
-[Short answer]
-
-### Explanation
-[Brief explanation]
-
-### Source Context
-[If real-time data was used]
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
 ${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
 `.trim();
@@ -1226,189 +1481,259 @@ const selfVerifyAnswer = async (
   return String(verified || draftAnswer).trim();
 };
 
-const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
-  const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
+const generateProfessionalReply = async (
+  messageText: string,
+  chatIdentity?: string | number,
+  scope: string = 'telegram:primary'
+): Promise<string> => {
+  const trimmedInput = String(messageText || '').trim();
+  if (!trimmedInput) {
+    return 'Please send a message so I can help.';
+  }
+  if (trimmedInput.length > MAX_USER_PROMPT_LENGTH) {
+    return `Your message is too long (${trimmedInput.length} chars). Please keep it under ${MAX_USER_PROMPT_LENGTH} characters.`;
+  }
+  const conversationKey = buildConversationKey(scope, chatIdentity) || undefined;
+  const commandReply = getCommandReply(trimmedInput, conversationKey);
+  if (commandReply) {
+    return commandReply;
+  }
+
+  const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
   if (isGreetingPrompt(normalizedPrompt)) {
     const fastGreeting = 'Hello! How can I help you today?';
-    appendChatHistory(chatId, messageText, fastGreeting);
+    appendChatHistory(conversationKey, trimmedInput, fastGreeting);
     return fastGreeting;
   }
   if (/(what('?s| is)\s+your\s+name|your name\??)/.test(normalizedPrompt)) {
     const answer = 'I am SwiftDeploy AI assistant. I can help with coding, debugging, bot setup, deployment, and general questions.';
-    appendChatHistory(chatId, messageText, answer);
+    appendChatHistory(conversationKey, trimmedInput, answer);
     return answer;
   }
   if (/(what can you do|capabilities|how can you help|what do you do)/.test(normalizedPrompt)) {
     const answer = 'I can answer questions, help fix code, troubleshoot deployment issues, and guide Telegram/Discord bot setup step by step.';
-    appendChatHistory(chatId, messageText, answer);
+    appendChatHistory(conversationKey, trimmedInput, answer);
     return answer;
   }
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
-  const intent = detectIntent(messageText);
-  const realtimeSearchRequested = needsRealtimeSearch(messageText);
-  const cacheKey = `${chatId || 0}:${normalizedPrompt}`;
+  const intent = detectIntent(trimmedInput);
+  const realtimeSearchRequested = needsRealtimeSearch(trimmedInput);
+  const cacheScope = conversationKey || `${scope}:anonymous`;
+  const cacheKey = `${cacheScope}:${normalizedPrompt}`;
   const cached = timeSensitive ? undefined : aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.text;
   }
-
-  if (intent === 'math') {
-    const computed = tryComputeMath(messageText);
-    if (computed) return computed;
+  if (cached) {
+    aiResponseCache.delete(cacheKey);
   }
 
-  const userProfile = updateUserProfile(chatId, messageText);
-  const systemPrompt = buildSystemPrompt(intent, userProfile);
-  const startedAt = Date.now();
-  console.log('[AI_LOG] request', JSON.stringify({
-    chatId: chatId || null,
-    intent,
-    realtimeSearchTriggered: realtimeSearchRequested,
-    question: messageText.slice(0, 400)
-  }));
-  try {
-    const history = getChatHistory(chatId);
-    const response = await withTimeout(
-      generateBotResponse(messageText, undefined, history, systemPrompt),
-      AI_RESPONSE_TIMEOUT_MS,
-      'AI response timeout'
-    );
-    const polished = formatProfessionalResponse(response || 'No response generated.', messageText);
-    let clean = ensureEmojiInReply(
-      polished,
-      messageText
-    );
-    if ((intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
-      const strictRetryPrompt = `${messageText}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
-      const strictRetry = await withTimeout(
-        generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt),
-        AI_RESPONSE_TIMEOUT_MS,
-        'AI strict retry timeout'
-      );
-      clean = ensureEmojiInReply(
-        formatProfessionalResponse(strictRetry || clean, messageText),
-        messageText
-      );
+  if (intent === 'math') {
+    const computed = tryComputeMath(trimmedInput);
+    if (computed) {
+      appendChatHistory(conversationKey, trimmedInput, computed);
+      return computed;
     }
-    const shouldRetry = !isSimplePrompt(messageText) && (looksLowQualityAnswer(clean, messageText) || looksSuspiciousResponse(messageText, clean));
-    if (shouldRetry) {
-      const retryPrompt = `${messageText}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
-      const retry = await withTimeout(
-        generateBotResponse(retryPrompt, undefined, history, systemPrompt),
+  }
+
+  const existingInFlight = aiInFlightRequests.get(cacheKey);
+  if (existingInFlight) {
+    return existingInFlight;
+  }
+
+  const run = (async (): Promise<string> => {
+    const userProfile = updateUserProfile(conversationKey, trimmedInput);
+    const systemPrompt = buildSystemPrompt(intent, userProfile);
+    const startedAt = Date.now();
+    console.log('[AI_LOG] request', JSON.stringify({
+      chatId: chatIdentity || null,
+      scope,
+      intent,
+      realtimeSearchTriggered: realtimeSearchRequested,
+      question: trimmedInput.slice(0, 400)
+    }));
+    try {
+      const history = getChatHistory(conversationKey);
+      const response = await withTimeout(
+        generateBotResponse(trimmedInput, undefined, history, systemPrompt),
         AI_RESPONSE_TIMEOUT_MS,
         'AI response timeout'
       );
-      const retryPolished = formatProfessionalResponse(retry || clean, messageText);
-      let retryClean = ensureEmojiInReply(
-        retryPolished,
-        messageText
+      const polished = formatProfessionalResponse(response || 'No response generated.', trimmedInput);
+      let clean = ensureEmojiInReply(
+        polished,
+        trimmedInput
       );
-      if (intent === 'current_event' && !isSimplePrompt(messageText)) {
-        retryClean = ensureEmojiInReply(
-          formatProfessionalResponse(await selfVerifyAnswer(messageText, retryClean, history, systemPrompt), messageText),
-          messageText
+      if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
+        const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
+        const strictRetry = await withTimeout(
+          generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt),
+          AI_RESPONSE_TIMEOUT_MS,
+          'AI strict retry timeout'
+        );
+        clean = ensureEmojiInReply(
+          formatProfessionalResponse(strictRetry || clean, trimmedInput),
+          trimmedInput
         );
       }
-      appendChatHistory(chatId, messageText, retryClean);
-      if (!timeSensitive) {
-        aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      const shouldRetry = AI_MAX_RETRY_PASSES > 0
+        && !isSimplePrompt(trimmedInput)
+        && (looksLowQualityAnswer(clean, trimmedInput) || looksSuspiciousResponse(trimmedInput, clean));
+      if (shouldRetry) {
+        const retryPrompt = `${trimmedInput}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
+        const retry = await withTimeout(
+          generateBotResponse(retryPrompt, undefined, history, systemPrompt),
+          AI_RESPONSE_TIMEOUT_MS,
+          'AI response timeout'
+        );
+        const retryPolished = formatProfessionalResponse(retry || clean, trimmedInput);
+        let retryClean = ensureEmojiInReply(
+          retryPolished,
+          trimmedInput
+        );
+        if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
+          retryClean = ensureEmojiInReply(
+            formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt), trimmedInput),
+            trimmedInput
+          );
+        }
+        appendChatHistory(conversationKey, trimmedInput, retryClean);
+        if (!timeSensitive) {
+          aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+          pruneAiResponseCache();
+        }
+        console.log('[AI_LOG] response', JSON.stringify({
+          chatId: chatIdentity || null,
+          scope,
+          intent,
+          realtimeSearchTriggered: realtimeSearchRequested,
+          latencyMs: Date.now() - startedAt,
+          responseLength: retryClean.length,
+          retried: true
+        }));
+        return retryClean;
       }
-      console.log('[AI_LOG] response', JSON.stringify({
-        chatId: chatId || null,
-        intent,
-        realtimeSearchTriggered: realtimeSearchRequested,
-        latencyMs: Date.now() - startedAt,
-        responseLength: retryClean.length,
-        retried: true
-      }));
-      return retryClean;
-    }
-    if (intent === 'current_event' && !isSimplePrompt(messageText)) {
-      clean = ensureEmojiInReply(
-        formatProfessionalResponse(await selfVerifyAnswer(messageText, clean, history, systemPrompt), messageText),
-        messageText
-      );
-    }
-    appendChatHistory(chatId, messageText, clean);
-    if (!timeSensitive) {
-      aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
-    }
-    console.log('[AI_LOG] response', JSON.stringify({
-      chatId: chatId || null,
-      intent,
-      realtimeSearchTriggered: realtimeSearchRequested,
-      latencyMs: Date.now() - startedAt,
-      responseLength: clean.length,
-      retried: false
-    }));
-    return clean;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('LIVE_CONTEXT_UNAVAILABLE')) {
-      return 'I cannot verify live current-year data right now. Please retry in a few seconds, and I will fetch fresh sources before answering.';
-    }
-    if (timeSensitive) {
-      return 'Live verification failed for this time-sensitive query. Please retry in a few seconds so I can return a current, source-grounded answer.';
-    }
-    console.error('[AI] Primary model failed, switching to fallback:', error);
-    try {
-      const fallback = await withTimeout(
-        getAIResponse(messageText),
-        AI_RESPONSE_TIMEOUT_MS,
-        'Fallback AI response timeout'
-      );
-      const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', messageText);
-      const clean = ensureEmojiInReply(
-        fallbackPolished,
-        messageText
-      );
-      appendChatHistory(chatId, messageText, clean);
+      if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
+        clean = ensureEmojiInReply(
+          formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt), trimmedInput),
+          trimmedInput
+        );
+      }
+      appendChatHistory(conversationKey, trimmedInput, clean);
       if (!timeSensitive) {
         aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+        pruneAiResponseCache();
       }
       console.log('[AI_LOG] response', JSON.stringify({
-        chatId: chatId || null,
+        chatId: chatIdentity || null,
+        scope,
         intent,
         realtimeSearchTriggered: realtimeSearchRequested,
         latencyMs: Date.now() - startedAt,
         responseLength: clean.length,
-        fallbackUsed: true
+        retried: false
       }));
       return clean;
-    } catch (fallbackError) {
-      console.error('[AI] Fallback model failed:', fallbackError);
-      const emergency = generateEmergencyReply(messageText);
-      aiResponseCache.set(cacheKey, { text: emergency, expiresAt: Date.now() + 15_000 });
-      console.error('[AI_LOG] error', JSON.stringify({
-        chatId: chatId || null,
-        intent,
-        realtimeSearchTriggered: realtimeSearchRequested,
-        latencyMs: Date.now() - startedAt,
-        error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-      }));
-      return emergency;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('LIVE_CONTEXT_UNAVAILABLE')) {
+        return 'I cannot verify live current-year data right now. Please retry in a few seconds, and I will fetch fresh sources before answering.';
+      }
+      if (timeSensitive) {
+        return 'Live verification failed for this time-sensitive query. Please retry in a few seconds so I can return a current, source-grounded answer.';
+      }
+      console.error('[AI] Primary model failed, switching to fallback:', error);
+      try {
+        const fallback = await withTimeout(
+          getAIResponse(trimmedInput),
+          AI_RESPONSE_TIMEOUT_MS,
+          'Fallback AI response timeout'
+        );
+        const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
+        const clean = ensureEmojiInReply(
+          fallbackPolished,
+          trimmedInput
+        );
+        appendChatHistory(conversationKey, trimmedInput, clean);
+        if (!timeSensitive) {
+          aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+          pruneAiResponseCache();
+        }
+        console.log('[AI_LOG] response', JSON.stringify({
+          chatId: chatIdentity || null,
+          scope,
+          intent,
+          realtimeSearchTriggered: realtimeSearchRequested,
+          latencyMs: Date.now() - startedAt,
+          responseLength: clean.length,
+          fallbackUsed: true
+        }));
+        return clean;
+      } catch (fallbackError) {
+        console.error('[AI] Fallback model failed:', fallbackError);
+        const emergency = generateEmergencyReply(trimmedInput);
+        aiResponseCache.set(cacheKey, { text: emergency, expiresAt: Date.now() + 15_000 });
+        pruneAiResponseCache();
+        console.error('[AI_LOG] error', JSON.stringify({
+          chatId: chatIdentity || null,
+          scope,
+          intent,
+          realtimeSearchTriggered: realtimeSearchRequested,
+          latencyMs: Date.now() - startedAt,
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        }));
+        return emergency;
+      }
     }
+  })();
+
+  aiInFlightRequests.set(cacheKey, run);
+  try {
+    return await run;
+  } finally {
+    aiInFlightRequests.delete(cacheKey);
   }
 };
 
 // Telegram Bot Handler with debug logging
 const handleTelegramMessage = async (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
-  const messageText = msg.text || '';
+  const messageText = String(msg.text || '').trim();
+  if (!messageText) return;
   
   console.log(`[TELEGRAM] Received message from ${msg.from?.username || 'Unknown'}: ${messageText}`);
-  
-  const response = await generateProfessionalReply(messageText, chatId);
-  console.log(`[TELEGRAM] Sending response length=${response.length}`);
-  await sendTelegramReply(bot, chatId, response, msg.message_id);
+  try {
+    await bot.sendChatAction(chatId, 'typing');
+    const response = await sendTelegramStreamingReply(
+      bot,
+      chatId,
+      generateProfessionalReply(messageText, chatId, 'telegram:primary'),
+      msg.message_id
+    );
+    console.log(`[TELEGRAM] Sending response length=${response.length}`);
+  } catch (error) {
+    console.error('[TELEGRAM] Failed to handle message:', error);
+    await sendTelegramReply(bot, chatId, 'Signal processing issue detected. Please retry in a few seconds.', msg.message_id);
+  }
 };
 
 // Function to handle messages for specific bots
 const handleBotMessage = async (botToken: string, msg: any) => {
   const chatId = msg.chat.id;
-  const text = msg.text;
+  const text = String(msg.text || '').trim();
   const botId = getBotIdByTelegramToken(botToken);
 
   if (!text) return;
+  if (text.length > MAX_USER_PROMPT_LENGTH) {
+    const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
+    if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
+    await sendTelegramReply(
+      botInstance,
+      chatId,
+      `Your message is too long (${text.length} chars). Please keep it under ${MAX_USER_PROMPT_LENGTH} characters.`,
+      msg.message_id
+    );
+    return;
+  }
   if (botId) recordBotIncoming(botId);
 
   let botInstance = managedBots.get(botToken);
@@ -1418,8 +1743,9 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   }
 
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
+  const botScope = `telegram:${botId || botToken.slice(0, 12)}`;
 
-  if (text === '/start') {
+  if (/^\/start(?:@\w+)?$/i.test(text)) {
     const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
     const provider = (process.env.AI_PROVIDER || 'gemini').trim().toLowerCase();
     const activeModel =
@@ -1441,12 +1767,22 @@ const handleBotMessage = async (botToken: string, msg: any) => {
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
   }
+  const commandReply = getCommandReply(text, buildConversationKey(botScope, chatId) || undefined);
+  if (commandReply) {
+    await sendTelegramReply(botInstance, chatId, commandReply, msg.message_id);
+    if (botId) recordBotResponse(botId, commandReply, 0);
+    return;
+  }
 
   try {
     const startedAt = Date.now();
     await botInstance.sendChatAction(chatId, 'typing');
-    const aiReply = await generateProfessionalReply(text, chatId);
-    await sendTelegramReply(botInstance, chatId, aiReply, msg.message_id);
+    const aiReply = await sendTelegramStreamingReply(
+      botInstance,
+      chatId,
+      generateProfessionalReply(text, chatId, botScope),
+      msg.message_id
+    );
     if (botId) recordBotResponse(botId, aiReply, Date.now() - startedAt);
   } catch (err) {
     console.error(`[BOT_${botToken.substring(0, 8)}_FAIL] Failed to route signal:`, err);
@@ -1460,16 +1796,22 @@ const handleBotMessage = async (botToken: string, msg: any) => {
  */
 // Webhook endpoint for Telegram
 app.post('/webhook', (req, res) => {
+  if (!verifyTelegramWebhookRequest(req, 'primary')) {
+    return res.status(401).json({ error: 'Unauthorized webhook source' });
+  }
   const message = req.body.message;
   if (message) {
     handleTelegramMessage(message);
   }
-  res.sendStatus(200);
+  return res.sendStatus(200);
 });
 
 // Bot-specific webhook routes
 app.post('/webhook/:botId', (req, res) => {
   const { botId } = req.params;
+  if (!verifyTelegramWebhookRequest(req, botId)) {
+    return res.status(401).json({ error: 'Unauthorized webhook source' });
+  }
   let botToken = botTokens.get(botId);
 
   // Lazy recovery: if process restarted and in-memory map is empty, hydrate from persisted state.
@@ -1500,13 +1842,13 @@ app.post('/webhook/:botId', (req, res) => {
     });
   }
   
-  res.sendStatus(200);
+  return res.sendStatus(200);
 });
 
 /**
  * Gateway Provisioning
  */
-app.get('/set-webhook', async (req, res) => {
+app.get('/set-webhook', requireAdminAccess, async (req, res) => {
   if (!isProduction) {
     return res.json({
       ok: true,
@@ -1524,7 +1866,8 @@ app.get('/set-webhook', async (req, res) => {
   }
 
   const webhookUrl = `${BASE_URL}/webhook`;
-  const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${webhookUrl}`;
+  const secretToken = buildTelegramWebhookSecret('primary');
+  const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}${secretToken ? `&secret_token=${encodeURIComponent(secretToken)}` : ''}`;
   
   console.log(`[PROVISIONING] Attempting to link webhook to: ${webhookUrl}`);
   
@@ -1550,7 +1893,7 @@ app.get('/set-webhook', async (req, res) => {
 /**
  * Get Webhook Info
  */
-app.get('/get-webhook-info', async (req, res) => {
+app.get('/get-webhook-info', requireAdminAccess, async (req, res) => {
   try {
     const botToken = process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN;
     if (!botToken) {
@@ -1584,12 +1927,12 @@ app.get('/get-webhook-info', async (req, res) => {
  */
 app.post('/deploy-bot', requireAuth, async (req, res) => {
   const botToken = typeof req.body?.botToken === 'string' ? req.body.botToken.trim() : '';
-  const botId = typeof req.body?.botId === 'string' ? req.body.botId.trim() : '';
+  const requestedBotId = typeof req.body?.botId === 'string' ? req.body.botId.trim() : '';
   const reqUser = req.user as Express.User | undefined;
   const userEmail = (reqUser?.email || '').trim().toLowerCase();
   
-  if (!botToken || !botId) {
-    return res.status(400).json({ error: 'Bot token and ID are required' });
+  if (!botToken) {
+    return res.status(400).json({ error: 'Bot token is required' });
   }
   if (!userEmail) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -1611,7 +1954,12 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
     });
   }
   
-  console.log(`[DEPLOY] Deploying bot ${botId} with token ${botToken.substring(0, 10)}...`);
+  const fallbackBotId = botToken.split(':')[0] || '';
+  const candidateBotId = requestedBotId || fallbackBotId;
+  if (!candidateBotId) {
+    return res.status(400).json({ error: 'Unable to derive bot ID from token. Please provide botId.' });
+  }
+  console.log(`[DEPLOY] Deploying bot ${candidateBotId} with token ${botToken.substring(0, 10)}...`);
   
   try {
     const verifyResponse = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
@@ -1623,6 +1971,14 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
         details: verifyData?.description || 'Telegram token validation failed'
       });
     }
+    const telegramNumericId = String(verifyData?.result?.id || '').trim();
+    const botId = telegramNumericId || candidateBotId;
+    const currentOwner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
+    if (currentOwner && currentOwner !== userEmail) {
+      return res.status(403).json({ success: false, error: 'Bot ID already belongs to another account' });
+    }
+    const botUsername = String(verifyData?.result?.username || '').trim();
+    const botName = String(verifyData?.result?.first_name || '').trim();
 
     // Store the bot token
     botTokens.set(botId, botToken);
@@ -1660,6 +2016,9 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
         success: true,
         message: 'Bot deployed successfully',
         botId,
+        botUsername: botUsername || null,
+        botName: botName || null,
+        telegramLink: botUsername ? `https://t.me/${botUsername}` : null,
         webhookUrl: `${BASE_URL}/webhook/${botId}`,
         telegramResponse: webhookResult.data
       });
@@ -1676,7 +2035,7 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
       });
     }
   } catch (error) {
-    console.error(`[DEPLOY] Error deploying bot ${botId}:`, error);
+    console.error(`[DEPLOY] Error deploying bot ${candidateBotId}:`, error);
     res.status(500).json({ 
       success: false, 
       error: 'Deployment failed', 
@@ -1707,6 +2066,10 @@ app.post('/deploy-discord-bot', requireAuth, async (req, res) => {
   }
   if (botToken.length < 50 || !botToken.includes('.')) {
     return res.status(400).json({ success: false, error: 'Invalid Discord bot token format' });
+  }
+  const discordOwner = (discordBots.get(botId)?.createdBy || getPersistedDiscordOwner(botId) || '').trim().toLowerCase();
+  if (discordOwner && discordOwner !== userEmail) {
+    return res.status(403).json({ success: false, error: 'Bot ID already belongs to another account' });
   }
 
   const subscription = ensureUserSubscriptionState(userEmail);
@@ -1865,7 +2228,8 @@ app.post('/discord/interactions/:botId', async (req, res) => {
 
   try {
     const startedAt = Date.now();
-    const answer = await generateProfessionalReply(prompt);
+    const discordUserId = String(body?.member?.user?.id || body?.user?.id || '').trim();
+    const answer = await generateProfessionalReply(prompt, discordUserId, `discord:${botId}:interaction`);
     await sendDiscordFollowUp(applicationId, interactionToken, answer);
     recordBotResponse(botId, answer, Date.now() - startedAt);
   } catch (error) {
@@ -1876,10 +2240,15 @@ app.post('/discord/interactions/:botId', async (req, res) => {
 
 app.get('/discord/bot-status/:botId', requireAuth, (req, res) => {
   const botId = String(req.params.botId || '').trim();
+  const reqUser = req.user as Express.User | undefined;
+  const userEmail = (reqUser?.email || '').trim().toLowerCase();
   const config = discordBots.get(botId);
   const gatewayClient = discordGatewayClients.get(botId);
   if (!config) {
     return res.status(404).json({ success: false, error: 'Discord bot not found' });
+  }
+  if (!userEmail || String(config.createdBy || '').trim().toLowerCase() !== userEmail) {
+    return res.status(403).json({ success: false, error: 'Access denied' });
   }
   return res.json({
     success: true,
@@ -1896,12 +2265,18 @@ app.get('/discord/bot-status/:botId', requireAuth, (req, res) => {
  * Get deployed bots
  */
 app.get('/bots', requireAuth, (req, res) => {
-  const telegramBots = Array.from(botTokens.entries()).map(([id, token]) => ({
+  const reqUser = req.user as Express.User | undefined;
+  const userEmail = (reqUser?.email || '').trim().toLowerCase();
+  const telegramBots = Array.from(botTokens.entries())
+    .filter(([id]) => String(telegramBotOwners.get(id) || '').trim().toLowerCase() === userEmail)
+    .map(([id, token]) => ({
     id,
     platform: 'TELEGRAM',
     token: token.substring(0, 10) + '...' // Mask the token
   }));
-  const discordItems = Array.from(discordBots.entries()).map(([id, cfg]) => ({
+  const discordItems = Array.from(discordBots.entries())
+    .filter(([, cfg]) => String(cfg.createdBy || '').trim().toLowerCase() === userEmail)
+    .map(([id, cfg]) => ({
     id,
     platform: 'DISCORD',
     token: cfg.botToken.slice(0, 10) + '...',
@@ -2132,7 +2507,7 @@ app.post('/verify-email', async (req, res) => {
 });
 
 // Test email route
-app.post('/test-email', async (req, res) => {
+app.post('/test-email', requireAdminAccess, async (req, res) => {
   const { email } = req.body;
   
   if (!email) {
@@ -2165,7 +2540,7 @@ app.post('/test-email', async (req, res) => {
 });
 
 // Get pending verifications (for debugging)
-app.get('/pending-verifications', (req, res) => {
+app.get('/pending-verifications', requireAdminAccess, (req, res) => {
   const verifications = getPendingVerifications();
   res.json({ verifications });
 });
@@ -2810,7 +3185,7 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
 });
 
 // Test endpoint for Hugging Face
-app.get('/api/test-hf', async (req, res) => {
+app.get('/api/test-hf', requireAdminAccess, async (req, res) => {
   try {
     const testResponse = await huggingFaceService.generateResponse("Hello, how are you?");
     res.json({ 
@@ -2829,6 +3204,9 @@ app.get('/api/test-hf', async (req, res) => {
 
 // Log required environment variables at startup
 setTimeout(() => {
+  const allowVerboseStartupLogs = process.env.NODE_ENV !== 'production'
+    || (process.env.DEBUG_STARTUP_LOGS || '').trim().toLowerCase() === 'true';
+  if (!allowVerboseStartupLogs) return;
   console.log('=== Environment Variables Loaded ===');
   console.log('CWD:', process.cwd());
   console.log('CWD .env exists:', fs.existsSync(path.resolve(process.cwd(), '.env')));
