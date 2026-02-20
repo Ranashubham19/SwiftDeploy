@@ -11,6 +11,7 @@ const MAX_HISTORY_TURNS = 8;
 const WEB_TIMEOUT_MS = 3500;
 const WEB_MAX_SNIPPETS = 5;
 const WEB_MAX_CHARS = 2500;
+const STRICT_TEMPORAL_GROUNDING = (process.env.STRICT_TEMPORAL_GROUNDING || 'true').toLowerCase() !== 'false';
 
 const getSarvamKeys = (): string[] => {
   const fromList = (process.env.SARVAM_API_KEYS || '')
@@ -116,14 +117,15 @@ const fetchDuckDuckGoContext = async (query: string): Promise<string[]> => {
   }), WEB_TIMEOUT_MS);
   if (!response.ok) return [];
   const html = await response.text();
-  const matches = html.match(/<a[^>]*class="result__a"[^>]*>[\s\S]*?<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>[\s\S]*?<\/a>/g) || [];
+  const resultBlocks = html.match(/<div[^>]*class="[^"]*result[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/div>/g) || [];
   const snippets: string[] = [];
-  for (const block of matches.slice(0, WEB_MAX_SNIPPETS)) {
+  for (const block of resultBlocks.slice(0, WEB_MAX_SNIPPETS * 2)) {
     const titleMatch = block.match(/<a[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/);
-    const snippetMatch = block.match(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/);
+    const snippetMatch = block.match(/<[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/);
     const title = stripHtml(titleMatch?.[1] || '');
     const snippet = stripHtml(snippetMatch?.[1] || '');
     if (title || snippet) snippets.push(`${title}: ${snippet}`.trim());
+    if (snippets.length >= WEB_MAX_SNIPPETS) break;
   }
   return snippets;
 };
@@ -422,6 +424,9 @@ export const generateBotResponse = async (
     const compactHistory = trimHistory(history);
     const adaptiveInstruction = buildAdaptiveInstruction(sanitizedPrompt, systemInstruction);
     const liveGrounding = await buildWebGrounding(sanitizedPrompt);
+    if (STRICT_TEMPORAL_GROUNDING && isTemporalQuery(sanitizedPrompt) && !liveGrounding) {
+      throw new Error('LIVE_CONTEXT_UNAVAILABLE');
+    }
     const groundedPrompt = liveGrounding
       ? `${sanitizedPrompt}\n\nUse this fresh web context when relevant and mention uncertainty when sources conflict.${liveGrounding}`
       : sanitizedPrompt;
@@ -487,6 +492,9 @@ export const generateBotResponse = async (
     
     // Enhanced error handling with specific error types
     if (error instanceof Error) {
+      if (error.message.includes('LIVE_CONTEXT_UNAVAILABLE')) {
+        throw new Error('LIVE_CONTEXT_UNAVAILABLE');
+      }
       if (error.message.includes('GEMINI_KEY') || error.message.includes('OPENROUTER') || error.message.includes('MOONSHOT')) {
         throw new Error("INVALID_PROVIDER_KEY: Please check your AI provider API configuration");
       } else if (error.message.includes('quota') || error.message.includes('rate')) {

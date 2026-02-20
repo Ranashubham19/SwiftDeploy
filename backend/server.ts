@@ -824,6 +824,11 @@ const hasCapabilityBoilerplate = (text: string): boolean => {
   return /early access|limitations|knowledge cutoff|october 2023|no real-time data access|i'm currently at v\d/.test(value);
 };
 
+const isTimeSensitivePrompt = (text: string): boolean => {
+  const value = String(text || '').toLowerCase();
+  return /(latest|today|current|recent|now|this year|202[4-9]|forecast|estimate|prediction|market|price|revenue|gdp|election|news)/.test(value);
+};
+
 const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
@@ -870,8 +875,9 @@ const appendChatHistory = (chatId: number | undefined, userText: string, modelTe
 
 const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
   const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
+  const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
   const cacheKey = `${chatId || 0}:${normalizedPrompt}`;
-  const cached = aiResponseCache.get(cacheKey);
+  const cached = timeSensitive ? undefined : aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.text;
   }
@@ -904,9 +910,14 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       return retryClean;
     }
     appendChatHistory(chatId, messageText, clean);
-    aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+    if (!timeSensitive) {
+      aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+    }
     return clean;
   } catch (error) {
+    if (error instanceof Error && error.message.includes('LIVE_CONTEXT_UNAVAILABLE')) {
+      return 'I cannot verify live current-year data right now. Please retry in a few seconds, and I will fetch fresh sources before answering.';
+    }
     console.error('[AI] Primary model failed, switching to fallback:', error);
     try {
       const fallback = await withTimeout(
