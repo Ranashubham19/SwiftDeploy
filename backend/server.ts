@@ -1205,8 +1205,6 @@ const applyProfessionalLayout = (text: string): string => {
 const ensureEmojiInReply = (text: string, prompt: string): string => {
   const value = String(text || '').trim();
   if (!value) return 'Got it.';
-  // Keep one contextual emoji for a premium, friendly tone without clutter.
-  if (/[\u{1F300}-\u{1FAFF}]/u.test(value)) return value;
   const p = `${String(prompt || '').toLowerCase()} ${value.toLowerCase()}`;
   const emoji =
     /(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p) ? '\u{1F4BB}'
@@ -1219,7 +1217,45 @@ const ensureEmojiInReply = (text: string, prompt: string): string => {
         : /(plan|goal|productivity|life|discipline|focus)/.test(p) ? '\u{1F3AF}'
           : isGreetingPrompt(p) ? '\u{1F44B}'
             : '\u2705';
-  return `${emoji} ${value}`;
+  return decorateAnswerWithVisuals(value, emoji);
+};
+
+const decorateAnswerWithVisuals = (text: string, primaryEmoji: string): string => {
+  const value = String(text || '').trim();
+  if (!value) return value;
+  if (value.includes('```')) {
+    // Keep code answers clean: light visual markers only.
+    const suffix = /[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]\s*$/u.test(value) ? value : `${value}\n\n${primaryEmoji}`;
+    return /^\s*[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]/u.test(suffix) ? suffix : `${primaryEmoji} ${suffix}`;
+  }
+
+  const lines = value.split('\n').map((line) => line.trim()).filter(Boolean);
+  const midEmoji = '\u{1F539}';
+  const endEmoji = '\u{1F3C1}';
+
+  if (lines.length >= 3) {
+    const midIndex = Math.min(1, lines.length - 1);
+    if (!/[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]/u.test(lines[midIndex])) {
+      lines[midIndex] = `${midEmoji} ${lines[midIndex]}`;
+    }
+    let output = lines.join('\n\n');
+    if (!/^\s*[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]/u.test(output)) {
+      output = `${primaryEmoji} ${output}`;
+    }
+    if (!/[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]\s*$/u.test(output)) {
+      output = `${output}\n\n${endEmoji}`;
+    }
+    return output;
+  }
+
+  let output = value;
+  if (!/^\s*[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]/u.test(output)) {
+    output = `${primaryEmoji} ${output}`;
+  }
+  if (!/[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]\s*$/u.test(output)) {
+    output = `${output}\n\n${endEmoji}`;
+  }
+  return output;
 };
 
 const stripReconnectLoopReply = (text: string): string => {
