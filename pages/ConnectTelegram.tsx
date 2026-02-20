@@ -344,11 +344,19 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         </button>
       </div>
 
-      <div className="text-center mb-8 max-w-4xl px-6">
-        <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase">
-          Deploy OpenClaw in Under 30 Seconds
+      <div className="text-center mb-10 max-w-5xl px-6">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-400/10 border border-emerald-300/20 text-emerald-300 text-xs font-black uppercase tracking-[0.2em] mb-7">
+          <span className="w-2 h-2 bg-emerald-300 rounded-full animate-pulse"></span>
+          Autonomous Telegram Provisioning
+        </div>
+        <h1 className="text-4xl md:text-6xl font-black tracking-tight uppercase leading-[0.95]">
+          <span className="text-white">Deploy </span>
+          <span className="bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-300 bg-clip-text text-transparent">OpenClaw</span>
+          <span className="text-zinc-300"> Under</span>
+          <br />
+          <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-emerald-300 bg-clip-text text-transparent">30 Seconds</span>
         </h1>
-        <p className="text-zinc-400 text-base md:text-lg mt-3">
+        <p className="text-zinc-400 text-base md:text-lg mt-4 max-w-3xl mx-auto">
           Eliminate technical setup and instantly launch your own always-on OpenClaw AI instance with a single secure deployment flow.
         </p>
       </div>
@@ -372,7 +380,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           <div className={`p-12 md:p-20 border-b md:border-b-0 ${flowStep === 'success' ? 'w-full' : 'flex-1 md:border-r border-white/5'}`}>
             <div className="flex items-center gap-3 mb-12">
               <ICONS.Telegram className="w-9 h-9 shrink-0" />
-              <h1 className="text-2xl font-black text-white tracking-tight uppercase italic">Connect Telegram</h1>
+              <h1 className="text-2xl font-black tracking-tight uppercase italic bg-gradient-to-r from-cyan-200 via-sky-200 to-emerald-200 bg-clip-text text-transparent">Connect Telegram</h1>
             </div>
             {renderFlowCard()}
           </div>
