@@ -1025,6 +1025,12 @@ const instantProfessionalReply = (text: string): string | null => {
   if (/what is ai\b|define ai\b/.test(q)) {
     return 'AI is software that performs tasks requiring human-like intelligence, such as understanding language, reasoning, prediction, and decision support.';
   }
+  if (/(value of pi|what is pi\b|pi value)/.test(q)) {
+    return 'Pi is approximately 3.141592653589793 (commonly 3.14).';
+  }
+  if (/(longest prime|largest prime|biggest prime)/.test(q)) {
+    return 'There is no longest prime number. Primes are infinite.';
+  }
   if (/ready to control my life|control my life|fix my life|change my life/.test(q)) {
     return 'Yes. Start now with this 24-hour reset: 1) choose one non-negotiable task and finish it today, 2) block distractions for 2 deep-work sessions (50/10), 3) sleep on time and write tomorrow\'s top 3 tasks before bed.';
   }
@@ -1184,6 +1190,17 @@ const looksLowQualityAnswer = (answer: string, prompt: string): boolean => {
   if (/i am reconnecting ai providers|please retry in 10-20 seconds/.test(lower)) return true;
   if (isComplexPrompt(prompt) && out.length < 120) return true;
   return false;
+};
+
+const isAcceptableShortAnswer = (answer: string, prompt: string): boolean => {
+  const out = String(answer || '').trim();
+  if (!out) return false;
+  const plain = out.replace(/^[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713]\s*/u, '').trim();
+  if (!plain) return false;
+  if (/^[\d.,+\-*/()%=\s]+$/.test(plain) && /\d/.test(plain)) return true;
+  if (/^(yes|no|true|false)\b/i.test(plain)) return true;
+  if (plain.length >= 8) return true;
+  return /(pi|euler|prime|capital|value|definition|meaning|date|year|population)/i.test(prompt);
 };
 
 const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
@@ -1650,7 +1667,7 @@ const generateProfessionalReply = async (
         polished,
         trimmedInput
       );
-      if (!clean || clean.length < 24) {
+      if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, trimmedInput))) {
         clean = instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput);
       }
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
