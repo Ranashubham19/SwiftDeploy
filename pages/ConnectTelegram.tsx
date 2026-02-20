@@ -186,7 +186,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             <div className="absolute -top-16 -left-16 w-40 h-40 bg-cyan-400/10 rounded-full blur-3xl"></div>
             <div className="absolute -bottom-16 -right-16 w-40 h-40 bg-emerald-400/10 rounded-full blur-3xl"></div>
             <div className="w-14 h-14 border-4 border-cyan-200/20 border-t-cyan-200 rounded-full animate-spin mb-8 mx-auto"></div>
-            <p className="text-3xl md:text-4xl font-semibold tracking-tight bg-gradient-to-r from-cyan-200 via-sky-200 to-emerald-200 bg-clip-text text-transparent">
+            <p className="text-3xl md:text-4xl font-medium tracking-[-0.01em] bg-gradient-to-r from-cyan-200 via-sky-200 to-emerald-200 bg-clip-text text-transparent">
               Pairing Telegram
             </p>
             <p className="text-zinc-300 text-base md:text-lg mt-4 font-medium tracking-wide">Connecting your bot. Hang tight...</p>
