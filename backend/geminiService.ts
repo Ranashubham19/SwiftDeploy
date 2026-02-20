@@ -6,12 +6,17 @@ enum AIModel {
 }
 
 type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
+type RetrievalDoc = { title: string; snippet: string; url?: string; source: string };
 
 const MAX_HISTORY_TURNS = 8;
 const WEB_TIMEOUT_MS = 3500;
 const WEB_MAX_SNIPPETS = 5;
 const WEB_MAX_CHARS = 2500;
 const STRICT_TEMPORAL_GROUNDING = (process.env.STRICT_TEMPORAL_GROUNDING || 'true').toLowerCase() !== 'false';
+const ALWAYS_WEB_RETRIEVAL = (process.env.ALWAYS_WEB_RETRIEVAL || 'true').toLowerCase() !== 'false';
+const RETRIEVAL_CACHE_TTL_MS = 2 * 60 * 1000;
+const RETRIEVAL_MAX_QUERIES = 3;
+const retrievalCache = new Map<string, { docs: RetrievalDoc[]; expiresAt: number }>();
 
 const getSarvamKeys = (): string[] => {
   const fromList = (process.env.SARVAM_API_KEYS || '')
@@ -112,7 +117,7 @@ const stripHtml = (input: string): string => {
     .trim();
 };
 
-const fetchDuckDuckGoContext = async (query: string): Promise<string[]> => {
+const fetchDuckDuckGoContext = async (query: string): Promise<RetrievalDoc[]> => {
   const encoded = encodeURIComponent(query);
   const url = `https://duckduckgo.com/html/?q=${encoded}`;
   const response = await withTimeout(fetch(url, {
@@ -123,19 +128,21 @@ const fetchDuckDuckGoContext = async (query: string): Promise<string[]> => {
   if (!response.ok) return [];
   const html = await response.text();
   const resultBlocks = html.match(/<div[^>]*class="[^"]*result[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/div>/g) || [];
-  const snippets: string[] = [];
+  const snippets: RetrievalDoc[] = [];
   for (const block of resultBlocks.slice(0, WEB_MAX_SNIPPETS * 2)) {
     const titleMatch = block.match(/<a[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/);
+    const hrefMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"/);
     const snippetMatch = block.match(/<[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/);
     const title = stripHtml(titleMatch?.[1] || '');
+    const href = stripHtml(hrefMatch?.[1] || '');
     const snippet = stripHtml(snippetMatch?.[1] || '');
-    if (title || snippet) snippets.push(`${title}: ${snippet}`.trim());
+    if (title || snippet) snippets.push({ title, snippet, url: href, source: 'duckduckgo' });
     if (snippets.length >= WEB_MAX_SNIPPETS) break;
   }
   return snippets;
 };
 
-const fetchWikipediaContext = async (query: string): Promise<string[]> => {
+const fetchWikipediaContext = async (query: string): Promise<RetrievalDoc[]> => {
   const encoded = encodeURIComponent(query);
   const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&utf8=1&format=json&srlimit=${WEB_MAX_SNIPPETS}`;
   const response = await withTimeout(fetch(url), WEB_TIMEOUT_MS);
@@ -144,23 +151,96 @@ const fetchWikipediaContext = async (query: string): Promise<string[]> => {
   const results = Array.isArray(data?.query?.search) ? data.query.search : [];
   return results
     .slice(0, WEB_MAX_SNIPPETS)
-    .map((r: any) => `${stripHtml(r?.title || '')}: ${stripHtml(r?.snippet || '')}`)
-    .filter((x: string) => Boolean(x));
+    .map((r: any) => ({
+      title: stripHtml(r?.title || ''),
+      snippet: stripHtml(r?.snippet || ''),
+      url: r?.pageid ? `https://en.wikipedia.org/?curid=${r.pageid}` : '',
+      source: 'wikipedia'
+    }))
+    .filter((x: RetrievalDoc) => Boolean(x.title || x.snippet));
+};
+
+const fetchSerperContext = async (query: string): Promise<RetrievalDoc[]> => {
+  const key = (process.env.SERPER_API_KEY || '').trim();
+  if (!key) return [];
+  const response = await withTimeout(fetch('https://google.serper.dev/search', {
+    method: 'POST',
+    headers: {
+      'X-API-KEY': key,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ q: query, num: WEB_MAX_SNIPPETS })
+  }), WEB_TIMEOUT_MS);
+  if (!response.ok) return [];
+  const data: any = await response.json().catch(() => ({}));
+  const organic = Array.isArray(data?.organic) ? data.organic : [];
+  return organic.slice(0, WEB_MAX_SNIPPETS).map((r: any) => ({
+    title: stripHtml(r?.title || ''),
+    snippet: stripHtml(r?.snippet || ''),
+    url: stripHtml(r?.link || ''),
+    source: 'serper'
+  })).filter((x: RetrievalDoc) => Boolean(x.title || x.snippet));
+};
+
+const buildSearchQueries = (prompt: string): string[] => {
+  const base = prompt.trim();
+  const year = new Date().getUTCFullYear();
+  const variants = [
+    base,
+    `${base} latest ${year}`,
+    `${base} official data ${year}`
+  ].map((x) => x.trim()).filter(Boolean);
+  return Array.from(new Set(variants)).slice(0, RETRIEVAL_MAX_QUERIES);
+};
+
+const rankDocs = (docs: RetrievalDoc[], prompt: string): RetrievalDoc[] => {
+  const tokens = prompt.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 3);
+  const scored = docs.map((d) => {
+    const text = `${d.title} ${d.snippet}`.toLowerCase();
+    let score = 0;
+    for (const t of tokens) {
+      if (text.includes(t)) score += 1;
+    }
+    if (/\b20(2[4-9]|3[0-9])\b/.test(text)) score += 2;
+    return { d, score };
+  });
+  return scored.sort((a, b) => b.score - a.score).map((x) => x.d);
 };
 
 const buildWebGrounding = async (prompt: string): Promise<string> => {
   const enabled = (process.env.LIVE_GROUNDING_ENABLED || 'true').toLowerCase() !== 'false';
-  if (!enabled || !isTemporalQuery(prompt)) return '';
+  const shouldRetrieve = ALWAYS_WEB_RETRIEVAL || isTemporalQuery(prompt) || isReasoningHeavyQuery(prompt);
+  if (!enabled || !shouldRetrieve) return '';
+
+  const cacheKey = prompt.trim().toLowerCase();
+  const cached = retrievalCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    const nowIso = new Date().toISOString();
+    const cachedBody = cached.docs.map((d) => `${d.title}: ${d.snippet}${d.url ? ` (${d.url})` : ''} [${d.source}]`).join('\n- ');
+    return `\nLive context retrieved at ${nowIso}:\n- ${cachedBody}`.slice(0, WEB_MAX_CHARS);
+  }
 
   try {
-    const [duck, wiki] = await Promise.all([
-      fetchDuckDuckGoContext(prompt).catch(() => []),
-      fetchWikipediaContext(prompt).catch(() => [])
-    ]);
-    const merged = Array.from(new Set([...duck, ...wiki])).slice(0, WEB_MAX_SNIPPETS);
-    if (!merged.length) return '';
+    const queries = buildSearchQueries(prompt);
+    const allDocs: RetrievalDoc[] = [];
+    for (const q of queries) {
+      const [duck, wiki, serper] = await Promise.all([
+        fetchDuckDuckGoContext(q).catch(() => []),
+        fetchWikipediaContext(q).catch(() => []),
+        fetchSerperContext(q).catch(() => [])
+      ]);
+      allDocs.push(...duck, ...wiki, ...serper);
+    }
+    const dedupMap = new Map<string, RetrievalDoc>();
+    for (const doc of allDocs) {
+      const key = `${doc.title}|${doc.snippet}`.toLowerCase();
+      if (!dedupMap.has(key)) dedupMap.set(key, doc);
+    }
+    const ranked = rankDocs(Array.from(dedupMap.values()), prompt).slice(0, WEB_MAX_SNIPPETS);
+    if (!ranked.length) return '';
+    retrievalCache.set(cacheKey, { docs: ranked, expiresAt: Date.now() + RETRIEVAL_CACHE_TTL_MS });
     const nowIso = new Date().toISOString();
-    const body = merged.join('\n- ');
+    const body = ranked.map((d) => `${d.title}: ${d.snippet}${d.url ? ` (${d.url})` : ''} [${d.source}]`).join('\n- ');
     return `\nLive context retrieved at ${nowIso}:\n- ${body}`.slice(0, WEB_MAX_CHARS);
   } catch {
     return '';
