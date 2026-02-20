@@ -12,6 +12,10 @@ SESSION_SECRET = { required = true, description = "Session secret for express-se
 AI_PROVIDER = { required = false, description = "Primary AI provider (gemini/sarvam/openrouter/openai/anthropic/moonshot)" }
 GEMINI_API_KEY = { required = false, description = "Google AI Studio API key for Gemini" }
 GEMINI_MODEL = { required = false, description = "Gemini model identifier (default: gemini-3-flash-preview)" }
+MOONSHOT_API_KEY = { required = false, description = "API key for Moonshot-compatible endpoint (including NVIDIA Integrate)" }
+MOONSHOT_MODEL = { required = false, description = "Moonshot-compatible model id (example: moonshotai/kimi-k2.5)" }
+MOONSHOT_BASE_URL = { required = false, description = "Moonshot-compatible chat completions endpoint URL" }
+MOONSHOT_THINKING = { required = false, description = "Enable reasoning/thinking mode for compatible endpoints (true/false)" }
 SARVAM_API_KEYS = { required = false, description = "Comma-separated Sarvam API keys for primary routing" }
 SARVAM_MODEL = { required = false, description = "Sarvam model identifier (default: sarvam-m)" }
 SARVAM_BASE_URL = { required = false, description = "Sarvam chat completions endpoint URL" }

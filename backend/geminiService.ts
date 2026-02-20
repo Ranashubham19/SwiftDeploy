@@ -403,6 +403,8 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
   const model = (process.env.MOONSHOT_MODEL || 'kimi-k2-0905-preview').trim();
   const historyText = extractHistoryText(history);
   const baseUrl = (process.env.MOONSHOT_BASE_URL || 'https://api.moonshot.ai/v1/chat/completions').trim();
+  const isNvidiaOpenAICompat = /integrate\.api\.nvidia\.com/i.test(baseUrl);
+  const thinkingEnabled = (process.env.MOONSHOT_THINKING || 'false').trim().toLowerCase() === 'true';
   const body = {
     model,
     messages: [
@@ -412,7 +414,8 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
     ],
     temperature: MODEL_TEMPERATURE,
     top_p: MODEL_TOP_P,
-    max_tokens: MODEL_MAX_TOKENS
+    max_tokens: MODEL_MAX_TOKENS,
+    ...(isNvidiaOpenAICompat ? { chat_template_kwargs: { thinking: thinkingEnabled } } : {})
   };
 
   const response = await fetch(baseUrl, {
@@ -430,7 +433,14 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
     throw new Error(`MOONSHOT_ERROR: ${message}`);
   }
 
-  const text = data?.choices?.[0]?.message?.content;
+  const message = data?.choices?.[0]?.message || {};
+  const text =
+    (typeof message?.content === 'string' && message.content.trim())
+    || (Array.isArray(message?.content)
+      ? message.content.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ').trim()
+      : '')
+    || (typeof message?.reasoning_content === 'string' ? message.reasoning_content.trim() : '')
+    || (typeof message?.reasoning === 'string' ? message.reasoning.trim() : '');
   if (!text || typeof text !== 'string') {
     throw new Error('MOONSHOT_EMPTY_RESPONSE');
   }
