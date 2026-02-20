@@ -66,6 +66,16 @@ const getGeminiApiKey = (): string => {
   return raw;
 };
 
+const getPreferredGeminiModels = (requested: AIModel): string[] => {
+  const envModel = (process.env.GEMINI_MODEL || '').trim();
+  const mappedFromRequested =
+    requested === AIModel.GEMINI_3_PRO
+      ? 'gemini-2.5-pro'
+      : 'gemini-2.5-flash';
+  const defaults = ['gemini-2.5-flash'];
+  return Array.from(new Set([envModel, mappedFromRequested, ...defaults].filter(Boolean)));
+};
+
 const extractHistoryText = (history: ChatHistory): string => {
   if (!history?.length) return '';
   return history
@@ -630,23 +640,29 @@ export const generateBotResponse = async (
           throw new Error("NEURAL_LINK_FAILED: GEMINI_KEY_MISSING");
         }
         const ai = new GoogleGenAI({ apiKey: geminiKey });
-        const modelName = model === AIModel.GEMINI_3_FLASH ? 'gemini-3-flash-preview' : 'gemini-3-pro-preview';
-        const response: GenerateContentResponse = await ai.models.generateContent({
-          model: modelName,
-          contents: [
-            ...compactHistory,
-            { role: 'user', parts: [{ text: groundedPrompt }] }
-          ],
-          config: {
-            systemInstruction: adaptiveInstruction,
-            temperature: MODEL_TEMPERATURE,
-            topP: MODEL_TOP_P,
-            maxOutputTokens: MODEL_MAX_TOKENS,
-            thinkingConfig: { thinkingBudget: 0 }
+        let geminiError: Error | null = null;
+        for (const modelName of getPreferredGeminiModels(model)) {
+          try {
+            const response: GenerateContentResponse = await ai.models.generateContent({
+              model: modelName,
+              contents: [
+                ...compactHistory,
+                { role: 'user', parts: [{ text: groundedPrompt }] }
+              ],
+              config: {
+                systemInstruction: adaptiveInstruction,
+                temperature: MODEL_TEMPERATURE,
+                topP: MODEL_TOP_P,
+                maxOutputTokens: MODEL_MAX_TOKENS,
+                thinkingConfig: { thinkingBudget: 0 }
+              }
+            });
+            return response.text || "No response generated.";
+          } catch (modelError) {
+            geminiError = modelError instanceof Error ? modelError : new Error(String(modelError));
           }
-        });
-
-        return response.text || "No response generated.";
+        }
+        throw geminiError || new Error('GEMINI_MODEL_ROUTING_FAILED');
       } catch (providerError) {
         lastError = providerError instanceof Error ? providerError : new Error(String(providerError));
       }

@@ -608,13 +608,16 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/^(hi|hii|hello|hey)\b/.test(lower)) {
     return 'Hi! I am online and ready to help. Ask me anything about your bot, deployment, or setup. 😊';
   }
+  if (/(how are you|how r u|how're you)/.test(lower)) {
+    return 'I am doing well and ready to help. Tell me what you need and I will assist right away.';
+  }
   if (/(bye|good ?night|good ?bye)/.test(lower)) {
     return 'Goodbye! I will stay online 24/7 whenever you need help again. 👋';
   }
   if (/(help|support|issue|error|problem)/.test(lower)) {
     return 'I can help. Please share the exact error text or screenshot details, and I will give a step-by-step fix. 🛠️';
   }
-  return `I received your message: "${text.slice(0, 220)}". Please share a bit more detail and I will help step by step.`;
+  return 'I am online and ready to help. Please ask your question again and I will answer directly.';
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -1408,7 +1411,22 @@ const handleBotMessage = async (botToken: string, msg: any) => {
 
   if (text === '/start') {
     const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
-    const welcome = `*SwiftDeploy Bot Active.*\n\nAI Model: Kimi K2.5 (primary, with provider failover)\nMode: ${mode === 'premium' ? 'Premium Assistant' : 'Standard'}\nStatus: Operational\n\nSend a message to start chatting with AI.`;
+    const provider = (process.env.AI_PROVIDER || 'gemini').trim().toLowerCase();
+    const activeModel =
+      provider === 'gemini'
+        ? (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
+        : provider === 'moonshot'
+          ? (process.env.MOONSHOT_MODEL || 'kimi-k2.5').trim()
+          : provider === 'openai'
+            ? (process.env.OPENAI_MODEL || 'gpt-5.2').trim()
+            : provider === 'anthropic'
+              ? (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim()
+              : provider === 'openrouter'
+                ? (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim()
+                : provider === 'sarvam'
+                  ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
+                  : 'auto';
+    const welcome = `*SwiftDeploy Bot Active.*\n\nAI Provider: ${provider}\nAI Model: ${activeModel}\nMode: ${mode === 'premium' ? 'Premium Assistant' : 'Standard'}\nStatus: Operational\n\nSend a message to start chatting with AI.`;
     await botInstance.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
