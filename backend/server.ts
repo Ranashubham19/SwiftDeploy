@@ -380,6 +380,26 @@ const authRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
+const normalizeSecret = (raw: string): string => {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+};
+
+const getStripeSecretKey = (): string => {
+  return normalizeSecret(
+    process.env.STRIPE_SECRET_KEY ||
+    process.env.STRIPE_SECRET ||
+    ''
+  );
+};
+
 const billingRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -2224,7 +2244,7 @@ app.post('/forgot-password/reset', async (req, res) => {
 });
 
 app.get('/billing/stripe-account', requireAuth, (req, res) => {
-  const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
+  const stripeSecretKey = getStripeSecretKey();
   const stripePublishableKey = (process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
   const configured = stripeSecretKey.startsWith('sk_');
   const publishableConfigured = stripePublishableKey.startsWith('pk_');
@@ -2306,7 +2326,7 @@ app.post('/billing/create-checkout-session', requireAuth, billingRateLimit, asyn
 
   try {
     if (provider === 'stripe') {
-      const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
+      const stripeSecretKey = getStripeSecretKey();
       if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
         return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
       }
@@ -2417,7 +2437,7 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
     return res.status(400).json({ success: false, message: 'Maximum single purchase is $5000.' });
   }
 
-  const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
+  const stripeSecretKey = getStripeSecretKey();
   if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
     return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
   }
