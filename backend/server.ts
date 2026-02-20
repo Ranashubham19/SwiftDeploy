@@ -819,6 +819,11 @@ const ensureEmojiInReply = (text: string, prompt: string): string => {
   return `${value} ${pick}`;
 };
 
+const hasCapabilityBoilerplate = (text: string): boolean => {
+  const value = String(text || '').toLowerCase();
+  return /early access|limitations|knowledge cutoff|october 2023|no real-time data access|i'm currently at v\d/.test(value);
+};
+
 const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
@@ -871,7 +876,7 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
     return cached.text;
   }
 
-  const systemPrompt = (process.env.BOT_SYSTEM_PROMPT || 'You are SwiftDeploy AI assistant. Respond quickly, professionally, and accurately. Prefer concise, structured answers. Include relevant emojis naturally in responses (about 1-3 per reply). If uncertain, clearly state uncertainty instead of guessing.').trim();
+  const systemPrompt = (process.env.BOT_SYSTEM_PROMPT || 'You are SwiftDeploy AI assistant. Respond quickly, professionally, and accurately. Prefer concise, structured answers. Include relevant emojis naturally in responses (about 1-3 per reply). If uncertain, clearly state uncertainty instead of guessing. Never answer with self-capability disclaimers (such as model version, early-access status, knowledge cutoff, or generic limitations) unless the user explicitly asks about capabilities. Focus on answering the user question directly.').trim();
   try {
     const history = getChatHistory(chatId);
     const response = await withTimeout(
@@ -883,6 +888,21 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       sanitizeForTelegram(response || 'No response generated.'),
       messageText
     );
+    if (hasCapabilityBoilerplate(clean)) {
+      const retryPrompt = `${messageText}\n\nAnswer the question directly. Do not include model limitations/cutoff boilerplate.`;
+      const retry = await withTimeout(
+        generateBotResponse(retryPrompt, undefined, history, systemPrompt),
+        AI_RESPONSE_TIMEOUT_MS,
+        'AI response timeout'
+      );
+      const retryClean = ensureEmojiInReply(
+        sanitizeForTelegram(retry || clean),
+        messageText
+      );
+      appendChatHistory(chatId, messageText, retryClean);
+      aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+      return retryClean;
+    }
     appendChatHistory(chatId, messageText, clean);
     aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
     return clean;
