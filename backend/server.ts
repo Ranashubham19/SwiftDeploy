@@ -472,6 +472,20 @@ const billingRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
+const deployRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 6,
+  keyGenerator: (req) => {
+    const reqUser = req.user as Express.User | undefined;
+    const email = (reqUser?.email || '').trim().toLowerCase();
+    if (email) return `deploy:user:${email}`;
+    return `deploy:ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+  },
+  message: { message: 'Too many deploy attempts. Please wait and try again.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 const webhookRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 150,
@@ -517,6 +531,23 @@ const verifyTelegramWebhookRequest = (req: express.Request, botId: string): bool
   } catch {
     return false;
   }
+};
+
+const getActiveAiConfig = (): { provider: string; model: string } => {
+  const provider = (process.env.AI_PROVIDER || 'moonshot').trim().toLowerCase();
+  const model =
+    provider === 'moonshot'
+      ? (process.env.MOONSHOT_MODEL || 'moonshotai/kimi-k2.5').trim()
+      : provider === 'openai'
+        ? (process.env.OPENAI_MODEL || 'gpt-5.2').trim()
+        : provider === 'anthropic'
+          ? (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim()
+          : provider === 'openrouter'
+            ? (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim()
+            : provider === 'sarvam'
+              ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
+              : (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+  return { provider, model };
 };
 
 // Middleware configuration
@@ -1925,7 +1956,7 @@ app.get('/get-webhook-info', requireAdminAccess, async (req, res) => {
 /**
  * Bot Deployment Route
  */
-app.post('/deploy-bot', requireAuth, async (req, res) => {
+app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
   const botToken = typeof req.body?.botToken === 'string' ? req.body.botToken.trim() : '';
   const requestedBotId = typeof req.body?.botId === 'string' ? req.body.botId.trim() : '';
   const reqUser = req.user as Express.User | undefined;
@@ -1979,6 +2010,14 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
     }
     const botUsername = String(verifyData?.result?.username || '').trim();
     const botName = String(verifyData?.result?.first_name || '').trim();
+    if (!botUsername) {
+      return res.status(400).json({
+        success: false,
+        error: 'Telegram bot username missing',
+        details: 'Create bot via @BotFather first, then use its token here.'
+      });
+    }
+    const aiConfig = getActiveAiConfig();
 
     // Store the bot token
     botTokens.set(botId, botToken);
@@ -2019,6 +2058,9 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
         botUsername: botUsername || null,
         botName: botName || null,
         telegramLink: botUsername ? `https://t.me/${botUsername}` : null,
+        aiProvider: aiConfig.provider,
+        aiModel: aiConfig.model,
+        aiModelLocked: true,
         webhookUrl: `${BASE_URL}/webhook/${botId}`,
         telegramResponse: webhookResult.data
       });
@@ -2044,7 +2086,7 @@ app.post('/deploy-bot', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/deploy-discord-bot', requireAuth, async (req, res) => {
+app.post('/deploy-discord-bot', requireAuth, deployRateLimit, async (req, res) => {
   const reqUser = req.user as Express.User | undefined;
   const userEmail = (reqUser?.email || '').trim().toLowerCase();
   const botId = typeof req.body?.botId === 'string' ? req.body.botId.trim() : '';
@@ -2085,6 +2127,7 @@ app.post('/deploy-discord-bot', requireAuth, async (req, res) => {
   }
 
   try {
+    const aiConfig = getActiveAiConfig();
     const meResponse = await fetch('https://discord.com/api/v10/users/@me', {
       method: 'GET',
       headers: { Authorization: `Bot ${botToken}` }
@@ -2166,6 +2209,9 @@ app.post('/deploy-discord-bot', requireAuth, async (req, res) => {
       interactionUrl,
       inviteUrl,
       botName: meData?.username || 'Discord Bot',
+      aiProvider: aiConfig.provider,
+      aiModel: aiConfig.model,
+      aiModelLocked: true,
       message: 'Discord bot deployed successfully'
     });
   } catch (error) {

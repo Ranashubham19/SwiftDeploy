@@ -23,6 +23,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [showConnectedToast, setShowConnectedToast] = useState(false);
   const [connectedBotUsername, setConnectedBotUsername] = useState(stageBotUsername);
   const [connectedBotLink, setConnectedBotLink] = useState(stageBotLink);
+  const [connectedAiProvider, setConnectedAiProvider] = useState('');
+  const [connectedAiModel, setConnectedAiModel] = useState('');
 
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -122,6 +124,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       setBots([newBot, ...bots]);
       setConnectedBotUsername(botUsername);
       setConnectedBotLink(telegramLink);
+      setConnectedAiProvider(String(result.aiProvider || ''));
+      setConnectedAiModel(String(result.aiModel || ''));
       setShowConnectedToast(true);
       window.setTimeout(() => setShowConnectedToast(false), 4200);
       setFlowStep('send-first-message');
@@ -233,6 +237,11 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             {connectedBotUsername ? (
               <p className="text-zinc-200 mt-2">
                 Connected bot: <span className="font-black">@{connectedBotUsername}</span>
+              </p>
+            ) : null}
+            {connectedAiModel ? (
+              <p className="text-zinc-400 mt-2 text-sm">
+                AI Engine: <span className="text-zinc-200 font-semibold">{connectedAiProvider}/{connectedAiModel}</span>
               </p>
             ) : null}
           </div>
