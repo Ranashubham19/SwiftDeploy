@@ -232,7 +232,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
               step={1}
               value={creditAmount}
               onChange={(e) => setCreditAmount(e.target.value)}
-              className="bg-[#141416] border border-white/10 rounded-xl px-4 py-3 text-zinc-200 font-semibold focus:outline-none focus:border-cyan-400/40"
+              placeholder="Minimum amount: $10"
+              className="bg-[#141416] border border-white/10 rounded-xl px-4 py-3 text-zinc-200 font-semibold placeholder:text-zinc-500/90 placeholder:italic placeholder:font-medium placeholder:tracking-[0.01em] focus:outline-none focus:border-cyan-400/40"
             />
             <button
               type="button"
