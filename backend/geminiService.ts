@@ -7,6 +7,7 @@ enum AIModel {
 
 type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 type RetrievalDoc = { title: string; snippet: string; url?: string; source: string };
+type IntentType = 'math' | 'current_event' | 'coding' | 'general';
 
 const MAX_HISTORY_TURNS = 8;
 const WEB_TIMEOUT_MS = 3500;
@@ -17,6 +18,30 @@ const ALWAYS_WEB_RETRIEVAL = (process.env.ALWAYS_WEB_RETRIEVAL || 'false').toLow
 const RETRIEVAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const RETRIEVAL_MAX_QUERIES = 2;
 const retrievalCache = new Map<string, { docs: RetrievalDoc[]; expiresAt: number }>();
+const MODEL_TEMPERATURE = 0.2;
+const MODEL_TOP_P = 0.8;
+const MODEL_MAX_TOKENS = 1000;
+
+const REALTIME_KEYWORDS = ["2024", "2025", "2026", "today", "now", "current", "latest", "right now"];
+
+export const needsRealtimeSearch = (userMessage: string): boolean => {
+  const msg = String(userMessage || '').toLowerCase();
+  return REALTIME_KEYWORDS.some((k) => msg.includes(k));
+};
+
+const detectIntent = (text: string): IntentType => {
+  const q = String(text || '').toLowerCase();
+  if (/(^|\s)(solve|calculate|what is|evaluate)\s+[-+*/().\d\s]{3,}$/.test(q) || /[-+*/()]/.test(q) && /\d/.test(q) && q.length < 100) {
+    return 'math';
+  }
+  if (/(code|bug|typescript|javascript|python|sql|regex|api|function|class|compile|error|stack trace)/.test(q)) {
+    return 'coding';
+  }
+  if (needsRealtimeSearch(q) || /(news|election|gdp|stock|price|market|who is|as of)/.test(q)) {
+    return 'current_event';
+  }
+  return 'general';
+};
 
 const getSarvamKeys = (): string[] => {
   const fromList = (process.env.SARVAM_API_KEYS || '')
@@ -90,19 +115,41 @@ const buildAdaptiveInstruction = (prompt: string, customInstruction?: string): s
     `
     : '';
 
+  const intent = detectIntent(prompt);
+  const structureBlock = `
+For factual questions, use this format:
+### Direct Answer
+[Short answer]
+
+### Explanation
+[Brief explanation]
+
+### Source Context
+[Only if real-time data was used]
+`;
+
   return `
-    You are SwiftDeploy AI, a high-accuracy assistant for production bot users.
-    Core response rules:
-    - Give direct, correct, and practical answers.
-    - Show key assumptions before conclusions for estimates.
-    - Prefer structured answers with short bullets and clear numbers.
-    - If confidence is low, say what is unknown and what data is needed.
-    - Keep output concise and include only what is necessary.
-    - Use retrieved web context only when directly relevant to the question.
-    - If context includes unrelated data, ignore it.
-    ${temporalHint}
-    ${customInstruction || ''}
-  `;
+You are a professional AI assistant.
+
+Rules:
+- Always give clear, structured answers.
+- If question involves current events, latest data, or specific year beyond training knowledge, indicate that live verification may be required.
+- Do not fabricate facts.
+- If unsure, say: "I do not have enough verified information."
+- Keep responses accurate and concise.
+- Use step-by-step reasoning when needed.
+- Avoid unnecessary fluff.
+- If user asks about year like 2024, 2025, 2026, treat it as time-sensitive.
+- Route behavior by intent:
+  - math: be exact, show steps briefly.
+  - coding: provide practical, executable guidance.
+  - current_event: prioritize verified fresh context.
+  - general: concise and factual.
+- Active intent: ${intent}
+${structureBlock}
+${temporalHint}
+${customInstruction || ''}
+  `.trim();
 };
 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
@@ -218,7 +265,7 @@ const rankDocs = (docs: RetrievalDoc[], prompt: string): RetrievalDoc[] => {
 
 const buildWebGrounding = async (prompt: string): Promise<string> => {
   const enabled = (process.env.LIVE_GROUNDING_ENABLED || 'true').toLowerCase() !== 'false';
-  const shouldRetrieve = ALWAYS_WEB_RETRIEVAL || needsLiveFacts(prompt);
+  const shouldRetrieve = needsRealtimeSearch(prompt) || ALWAYS_WEB_RETRIEVAL || needsLiveFacts(prompt);
   if (!enabled || !shouldRetrieve) return '';
 
   const cacheKey = prompt.trim().toLowerCase();
@@ -292,8 +339,9 @@ const callOpenAI = async (prompt: string, history: ChatHistory, systemInstructio
       ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
       { role: 'user', content: prompt }
     ],
-    temperature: 0.2,
-    max_tokens: 480
+    temperature: MODEL_TEMPERATURE,
+    top_p: MODEL_TOP_P,
+    max_tokens: MODEL_MAX_TOKENS
   };
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -334,8 +382,9 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
       ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
       { role: 'user', content: prompt }
     ],
-    temperature: 0.2,
-    max_tokens: 600
+    temperature: MODEL_TEMPERATURE,
+    top_p: MODEL_TOP_P,
+    max_tokens: MODEL_MAX_TOKENS
   };
 
   const response = await fetch(baseUrl, {
@@ -377,8 +426,9 @@ const callAnthropic = async (prompt: string, history: ChatHistory, systemInstruc
     },
     body: JSON.stringify({
       model,
-      max_tokens: 480,
-      temperature: 0.2,
+      max_tokens: MODEL_MAX_TOKENS,
+      temperature: MODEL_TEMPERATURE,
+      top_p: MODEL_TOP_P,
       system: [systemInstruction, historyText ? `Conversation context:\n${historyText}` : ''].filter(Boolean).join('\n\n'),
       messages: [
         { role: 'user', content: prompt }
@@ -417,8 +467,9 @@ const callOpenRouter = async (prompt: string, history: ChatHistory, systemInstru
       ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
       { role: 'user', content: prompt }
     ],
-    temperature: 0.2,
-    max_tokens: 600
+    temperature: MODEL_TEMPERATURE,
+    top_p: MODEL_TOP_P,
+    max_tokens: MODEL_MAX_TOKENS
   };
 
   const response = await fetch(baseUrl, {
@@ -475,8 +526,9 @@ const callSarvam = async (prompt: string, history: ChatHistory, systemInstructio
             ...(historyText ? [{ role: 'system', content: `Conversation context:\n${historyText}` }] : []),
             { role: 'user', content: prompt }
           ],
-          temperature: 0.2,
-          max_tokens: 600
+          temperature: MODEL_TEMPERATURE,
+          top_p: MODEL_TOP_P,
+          max_tokens: MODEL_MAX_TOKENS
         })
       });
 
@@ -568,8 +620,9 @@ export const generateBotResponse = async (
           ],
           config: {
             systemInstruction: adaptiveInstruction,
-            temperature: 0.2,
-            maxOutputTokens: 480,
+            temperature: MODEL_TEMPERATURE,
+            topP: MODEL_TOP_P,
+            maxOutputTokens: MODEL_MAX_TOKENS,
             thinkingConfig: { thinkingBudget: 0 }
           }
         });

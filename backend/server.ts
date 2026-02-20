@@ -11,7 +11,7 @@ import session from 'express-session';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPendingVerifications, isEmailRegistered, markEmailAsRegistered, getUserByEmail, updateUserPassword, storePendingSignup, getPendingSignup, clearPendingSignup } from './emailService.js';
 import { huggingFaceService } from './huggingfaceService.js';
-import { generateBotResponse, estimateTokens } from './geminiService.js';
+import { generateBotResponse, estimateTokens, needsRealtimeSearch } from './geminiService.js';
 import { Request } from 'express';
 import bcrypt from 'bcrypt';
 import rateLimit from 'express-rate-limit';
@@ -122,8 +122,12 @@ const aiResponseCache = new Map<string, { text: string; expiresAt: number }>();
 type BotChatTurn = { role: 'user' | 'model'; parts: { text: string }[] };
 const chatHistoryStore = new Map<number, { history: BotChatTurn[]; updatedAt: number }>();
 const CHAT_HISTORY_TTL_MS = 30 * 60 * 1000;
-const CHAT_HISTORY_MAX_TURNS = 12;
+const CHAT_HISTORY_MAX_TURNS = 10;
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
+const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
+  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-chat-memory.json')
+    : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-chat-memory.json'));
 const FREE_DEPLOY_LIMIT = 1;
 const FREE_TRIAL_DAYS = 7;
 type PlanType = 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
@@ -955,6 +959,42 @@ const getChatHistory = (chatId?: number): BotChatTurn[] => {
   return entry.history;
 };
 
+const persistChatMemory = (): void => {
+  try {
+    const dir = path.dirname(CHAT_MEMORY_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const serialized = JSON.stringify(
+      Object.fromEntries(
+        Array.from(chatHistoryStore.entries()).map(([chatId, entry]) => [String(chatId), entry])
+      ),
+      null,
+      2
+    );
+    fs.writeFileSync(CHAT_MEMORY_FILE, serialized, 'utf8');
+  } catch (error) {
+    console.warn('[CHAT_MEMORY] Failed to persist chat memory:', (error as Error).message);
+  }
+};
+
+const loadChatMemory = (): void => {
+  try {
+    if (!fs.existsSync(CHAT_MEMORY_FILE)) return;
+    const raw = fs.readFileSync(CHAT_MEMORY_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, { history: BotChatTurn[]; updatedAt: number }>;
+    for (const [chatId, entry] of Object.entries(parsed || {})) {
+      const id = Number(chatId);
+      if (!Number.isFinite(id)) continue;
+      const history = Array.isArray(entry?.history) ? entry.history.slice(-CHAT_HISTORY_MAX_TURNS) : [];
+      const updatedAt = Number(entry?.updatedAt || 0);
+      if (!history.length) continue;
+      if (updatedAt && Date.now() - updatedAt > CHAT_HISTORY_TTL_MS) continue;
+      chatHistoryStore.set(id, { history, updatedAt: updatedAt || Date.now() });
+    }
+  } catch (error) {
+    console.warn('[CHAT_MEMORY] Failed to load chat memory:', (error as Error).message);
+  }
+};
+
 const appendChatHistory = (chatId: number | undefined, userText: string, modelText: string): void => {
   if (!chatId) return;
   const existing = getChatHistory(chatId);
@@ -964,66 +1004,110 @@ const appendChatHistory = (chatId: number | undefined, userText: string, modelTe
     { role: 'model' as const, parts: [{ text: modelText }] }
   ].slice(-CHAT_HISTORY_MAX_TURNS);
   chatHistoryStore.set(chatId, { history: next, updatedAt: Date.now() });
+  persistChatMemory();
 };
 
 const buildSystemPrompt = (): string => {
-  const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
   const timezone = (process.env.BOT_USER_TIMEZONE || '').trim();
   const role = (process.env.BOT_USER_ROLE || '').trim();
   const priorities = (process.env.BOT_USER_PRIORITIES || '').trim();
-  const tone = (process.env.BOT_TONE || 'professional').trim();
 
   const profile = [
     timezone ? `Timezone: ${timezone}` : '',
     role ? `User role: ${role}` : '',
-    priorities ? `Top priorities: ${priorities}` : '',
-    `Preferred tone: ${tone}`
+    priorities ? `Top priorities: ${priorities}` : ''
   ].filter(Boolean).join('\n');
 
-  const premiumPrompt = `
-You are Savio, a premium personal AI operator.
-Response style:
-- Confident, warm, highly professional.
-- Start with a direct answer first, then structure.
-- Use sections when useful: Summary, Action Plan, Risks, Next Step.
-- For estimates/time-sensitive topics: include "As of" date and assumptions.
-- Never return generic model-limit boilerplate unless user explicitly asks capabilities.
-- Never be vague when the user asks for execution steps.
-- Keep language plain and executive-ready. Avoid jargon unless asked.
-- Avoid unnecessary detail; focus only on what helps decision-making.
-- Always format cleanly with spacing, short headings, and concise bullet points.
+  const base = `
+You are a professional AI assistant.
 
-Quality bar:
-- Be concrete and practical.
-- Prefer checklists and decision-ready output.
-- If uncertain, say exactly what is uncertain and what is needed to resolve it.
+Rules:
+- Always give clear, structured answers.
+- If question involves current events, latest data, or specific year beyond training knowledge, indicate that live verification may be required.
+- Do not fabricate facts.
+- If unsure, say exactly: "I do not have enough verified information."
+- Keep responses accurate and concise.
+- Use step-by-step reasoning when needed.
+- Avoid unnecessary fluff.
+- If user asks about year like 2024, 2025, 2026, treat it as time-sensitive.
+
+Answer Format for factual questions:
+### Direct Answer
+[Short answer]
+
+### Explanation
+[Brief explanation]
+
+### Source Context
+[If real-time data was used]
 ${profile ? `\nUser profile:\n${profile}` : ''}
 `.trim();
-
-  const standardPrompt = `
-You are SwiftDeploy AI assistant. Respond quickly, professionally, and accurately.
-Prefer concise, structured answers.
-Include relevant emojis naturally in responses (about 1-3 per reply).
-If uncertain, clearly state uncertainty instead of guessing.
-Never answer with self-capability disclaimers unless user explicitly asks.
-Focus on answering the user question directly.
-`.trim();
-
-  const base = mode === 'premium' ? premiumPrompt : standardPrompt;
   const custom = (process.env.BOT_SYSTEM_PROMPT || '').trim();
   return custom ? `${base}\n\nAdditional instructions:\n${custom}` : base;
+};
+
+const detectIntent = (text: string): 'math' | 'current_event' | 'coding' | 'general' => {
+  const value = String(text || '').toLowerCase();
+  if ((/[+\-*/()]/.test(value) && /\d/.test(value) && value.length < 100) || /(^|\s)(solve|calculate|evaluate)\b/.test(value)) {
+    return 'math';
+  }
+  if (/(code|typescript|javascript|python|sql|regex|debug|stack trace|api|function|class)/.test(value)) {
+    return 'coding';
+  }
+  if (needsRealtimeSearch(value) || isTimeSensitivePrompt(value)) {
+    return 'current_event';
+  }
+  return 'general';
+};
+
+const tryComputeMath = (text: string): string | null => {
+  const cleaned = String(text || '').replace(/[^0-9+\-*/().\s]/g, '').trim();
+  if (!cleaned || !/[+\-*/]/.test(cleaned) || !/\d/.test(cleaned)) return null;
+  if (cleaned.length > 120) return null;
+  try {
+    const value = Function(`"use strict"; return (${cleaned});`)();
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return `### Direct Answer\n${value}\n\n### Explanation\nComputed directly from: \`${cleaned}\``;
+  } catch {
+    return null;
+  }
+};
+
+const looksSuspiciousResponse = (prompt: string, response: string): boolean => {
+  const out = String(response || '').trim();
+  if (!out) return true;
+  const q = String(prompt || '').toLowerCase();
+  const r = out.toLowerCase();
+  if (/(2026|2025|2024)/.test(q) && /\b2023\b/.test(r) && !/\b202[4-9]\b/.test(r)) return true;
+  if (/i (can('?t|not)|don't) (browse|access real[- ]?time|verify current)/.test(r) && needsRealtimeSearch(q)) return true;
+  if (/(market cap|gdp|revenue|population)/.test(q) && !/\d/.test(r)) return true;
+  return false;
 };
 
 const generateProfessionalReply = async (messageText: string, chatId?: number): Promise<string> => {
   const normalizedPrompt = messageText.trim().toLowerCase().replace(/\s+/g, ' ');
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
+  const intent = detectIntent(messageText);
+  const realtimeSearchRequested = needsRealtimeSearch(messageText);
   const cacheKey = `${chatId || 0}:${normalizedPrompt}`;
   const cached = timeSensitive ? undefined : aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.text;
   }
 
+  if (intent === 'math') {
+    const computed = tryComputeMath(messageText);
+    if (computed) return computed;
+  }
+
   const systemPrompt = buildSystemPrompt();
+  const startedAt = Date.now();
+  console.log('[AI_LOG] request', JSON.stringify({
+    chatId: chatId || null,
+    intent,
+    realtimeSearchTriggered: realtimeSearchRequested,
+    question: messageText.slice(0, 400)
+  }));
   try {
     const history = getChatHistory(chatId);
     const response = await withTimeout(
@@ -1036,7 +1120,7 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       polished,
       messageText
     );
-    if (looksLowQualityAnswer(clean, messageText)) {
+    if (looksLowQualityAnswer(clean, messageText) || looksSuspiciousResponse(messageText, clean)) {
       const retryPrompt = `${messageText}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
       const retry = await withTimeout(
         generateBotResponse(retryPrompt, undefined, history, systemPrompt),
@@ -1052,12 +1136,28 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       if (!timeSensitive) {
         aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
       }
+      console.log('[AI_LOG] response', JSON.stringify({
+        chatId: chatId || null,
+        intent,
+        realtimeSearchTriggered: realtimeSearchRequested,
+        latencyMs: Date.now() - startedAt,
+        responseLength: retryClean.length,
+        retried: true
+      }));
       return retryClean;
     }
     appendChatHistory(chatId, messageText, clean);
     if (!timeSensitive) {
       aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
     }
+    console.log('[AI_LOG] response', JSON.stringify({
+      chatId: chatId || null,
+      intent,
+      realtimeSearchTriggered: realtimeSearchRequested,
+      latencyMs: Date.now() - startedAt,
+      responseLength: clean.length,
+      retried: false
+    }));
     return clean;
   } catch (error) {
     if (error instanceof Error && error.message.includes('LIVE_CONTEXT_UNAVAILABLE')) {
@@ -1082,11 +1182,26 @@ const generateProfessionalReply = async (messageText: string, chatId?: number): 
       if (!timeSensitive) {
         aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
       }
+      console.log('[AI_LOG] response', JSON.stringify({
+        chatId: chatId || null,
+        intent,
+        realtimeSearchTriggered: realtimeSearchRequested,
+        latencyMs: Date.now() - startedAt,
+        responseLength: clean.length,
+        fallbackUsed: true
+      }));
       return clean;
     } catch (fallbackError) {
       console.error('[AI] Fallback model failed:', fallbackError);
       const emergency = generateEmergencyReply(messageText);
       aiResponseCache.set(cacheKey, { text: emergency, expiresAt: Date.now() + 15_000 });
+      console.error('[AI_LOG] error', JSON.stringify({
+        chatId: chatId || null,
+        intent,
+        realtimeSearchTriggered: realtimeSearchRequested,
+        latencyMs: Date.now() - startedAt,
+        error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      }));
       return emergency;
     }
   }
@@ -2549,6 +2664,7 @@ process.on('uncaughtException', (error) => {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  loadChatMemory();
   restorePersistedBots().catch((error) => {
     console.warn('[BOT_STATE] Restore routine failed:', (error as Error).message);
   });
