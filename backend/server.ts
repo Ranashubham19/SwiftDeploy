@@ -2386,6 +2386,69 @@ app.post('/billing/create-checkout-session', requireAuth, billingRateLimit, asyn
   }
 });
 
+app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async (req, res) => {
+  const reqUser = req.user as Express.User | undefined;
+  const email = (reqUser?.email || '').trim().toLowerCase();
+  if (!email) {
+    return res.status(401).json({ success: false, message: 'Authentication required' });
+  }
+
+  const amountRaw = Number(req.body?.amountUsd);
+  if (!Number.isFinite(amountRaw)) {
+    return res.status(400).json({ success: false, message: 'Please enter a valid amount.' });
+  }
+  const amountUsd = Math.floor(amountRaw);
+  if (amountUsd < 10) {
+    return res.status(400).json({ success: false, message: 'Minimum credit purchase is $10.' });
+  }
+  if (amountUsd > 5000) {
+    return res.status(400).json({ success: false, message: 'Maximum single purchase is $5000.' });
+  }
+
+  const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
+  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
+    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
+  }
+
+  const frontUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const successUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=success`;
+  const cancelUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=cancel`;
+
+  try {
+    const params = new URLSearchParams();
+    params.set('mode', 'payment');
+    params.set('success_url', successUrl);
+    params.set('cancel_url', cancelUrl);
+    params.set('customer_email', email);
+    params.set('payment_method_types[0]', 'card');
+    params.set('client_reference_id', reqUser?.id || randomUUID());
+    params.set('metadata[purchase_type]', 'credit_topup');
+    params.set('metadata[user_email]', email);
+    params.set('metadata[amount_usd]', String(amountUsd));
+    params.set('line_items[0][price_data][currency]', 'usd');
+    params.set('line_items[0][price_data][unit_amount]', String(amountUsd * 100));
+    params.set('line_items[0][price_data][product_data][name]', `SwiftDeploy Credit Top-up ($${amountUsd})`);
+    params.set('line_items[0][quantity]', '1');
+
+    const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${stripeSecretKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Idempotency-Key': randomUUID()
+      },
+      body: params.toString()
+    });
+    const stripeData: any = await stripeResponse.json().catch(() => ({}));
+    if (!stripeResponse.ok || !stripeData?.url) {
+      return res.status(502).json({ success: false, message: stripeData?.error?.message || 'Unable to create Stripe checkout session.' });
+    }
+    return res.json({ success: true, provider: 'stripe', checkoutUrl: stripeData.url, sessionId: stripeData.id });
+  } catch {
+    return res.status(500).json({ success: false, message: 'Failed to initialize secure checkout.' });
+  }
+});
+
 // Test endpoint for Hugging Face
 app.get('/api/test-hf', async (req, res) => {
   try {

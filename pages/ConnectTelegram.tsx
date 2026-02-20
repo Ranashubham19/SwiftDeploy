@@ -23,6 +23,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [showManualPlay, setShowManualPlay] = useState(false);
+  const [creditAmount, setCreditAmount] = useState<string>('10');
+  const [isPurchasingCredit, setIsPurchasingCredit] = useState(false);
+  const [creditError, setCreditError] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -127,6 +130,33 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     navigate('/connect/telegram/pairing');
   };
 
+  const handlePurchaseCredit = async () => {
+    const numeric = Number(creditAmount);
+    if (!Number.isFinite(numeric) || numeric < 10) {
+      setCreditError('Minimum purchase amount is $10.');
+      return;
+    }
+
+    setCreditError('');
+    setIsPurchasingCredit(true);
+    try {
+      const response = await fetch(apiUrl('/billing/create-credit-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ amountUsd: Math.floor(numeric) })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.checkoutUrl) {
+        throw new Error(data?.message || 'Unable to start secure Stripe checkout.');
+      }
+      window.location.href = data.checkoutUrl;
+    } catch (error: any) {
+      setCreditError(error?.message || 'Unable to start secure Stripe checkout.');
+      setIsPurchasingCredit(false);
+    }
+  };
+
   const renderFlowCard = () => {
     if (flowStep === 'send-first-message') {
       return (
@@ -169,15 +199,15 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           </div>
 
           <div>
-            <h2 className="text-4xl font-black text-white tracking-tight">Deployment success!</h2>
+            <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">Deployment success!</h2>
             <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
               Your bot is live. Use your Telegram to chat; usage and credits are below.
             </p>
           </div>
 
           <div className="pt-2">
-            <p className="text-6xl font-black text-white leading-none">$10</p>
-            <p className="text-zinc-400 mt-1 font-semibold">Remaining credits</p>
+            <p className="text-5xl md:text-6xl font-bold text-white/95 leading-none">$10</p>
+            <p className="text-zinc-400 mt-2 font-medium uppercase tracking-[0.12em] text-[11px]">Remaining credits</p>
           </div>
 
           <div className="text-sm text-zinc-500 font-semibold">
@@ -190,18 +220,25 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 max-w-[460px] mx-auto">
             <input
-              type="text"
-              readOnly
-              value="$ 10"
-              className="bg-[#141416] border border-white/10 rounded-xl px-4 py-3 text-zinc-300 font-bold focus:outline-none"
+              type="number"
+              min={10}
+              step={1}
+              value={creditAmount}
+              onChange={(e) => setCreditAmount(e.target.value)}
+              className="bg-[#141416] border border-white/10 rounded-xl px-4 py-3 text-zinc-200 font-semibold focus:outline-none focus:border-cyan-400/40"
             />
             <button
               type="button"
+              onClick={handlePurchaseCredit}
+              disabled={isPurchasingCredit}
               className="bg-zinc-100 text-black hover:bg-white rounded-xl px-5 py-3 font-black uppercase text-xs tracking-wider transition-colors"
             >
-              Purchase credit →
+              {isPurchasingCredit ? 'Opening checkout...' : 'Purchase credit →'}
             </button>
           </div>
+          {creditError ? (
+            <p className="text-xs text-red-300">{creditError}</p>
+          ) : null}
 
           <p className="text-xs text-zinc-500">One time purchase. 10% is charged as processing fees.</p>
 
