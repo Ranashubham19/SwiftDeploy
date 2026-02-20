@@ -1079,12 +1079,22 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
-  // Improve readability in Telegram by expanding list-like text into line-separated blocks.
+  // Drop quoted prompt echoes if model repeats user text as a heading.
+  const normalizedPrompt = sanitizeForTelegram(prompt).toLowerCase();
+  if (normalizedPrompt) {
+    const lines = cleaned.split('\n').map((line) => line.trim());
+    const firstLine = (lines[0] || '').toLowerCase();
+    if (firstLine === normalizedPrompt || (normalizedPrompt.length > 24 && firstLine.startsWith(normalizedPrompt.slice(0, 24)))) {
+      cleaned = lines.slice(1).join('\n').trim();
+    }
+  }
+
+  // Improve readability by expanding list-like text into line-separated blocks.
   cleaned = cleaned
     .replace(/\s+([0-9]+)[\)\.]\s+/g, '\n$1. ')
     .replace(/:\s*([0-9]+\.)\s/g, ':\n$1 ')
-    .replace(/(?:^|\n)\s*[-*]\s+/g, '\n• ')
-    .replace(/\n?•\s*/g, '\n• ')
+    .replace(/(?:^|\n)\s*[-*]\s+/g, '\n- ')
+    .replace(/\n?-\s*/g, '\n- ')
     .replace(/\n?([0-9]+\.)\s+/g, '\n$1 ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -1098,21 +1108,26 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/\n{2,}(next step|summary|key points):[\s\S]*$/i, '')
     .trim();
 
+  // Never truncate short prompts to one sentence.
   if (isSimplePrompt(prompt)) {
-    const first = toSentenceChunks(cleaned)[0] || cleaned;
-    return first;
+    const simpleSentences = toSentenceChunks(cleaned);
+    if (simpleSentences.length > 0 && simpleSentences.length <= 3) {
+      return simpleSentences.join(' ');
+    }
   }
 
-  // If a long answer comes as one block, split by sentences for easier reading.
-  if (!cleaned.includes('\n') && cleaned.length > 220) {
-    cleaned = toSentenceChunks(cleaned).join('\n');
+  // If a long answer comes as one block, split by paragraph-sized chunks.
+  if (!cleaned.includes('\n') && cleaned.length > 320) {
+    const chunks = toSentenceChunks(cleaned);
+    cleaned = chunks.length > 3 ? chunks.join('\n\n') : cleaned;
   }
 
   cleaned = cleaned
-    .replace(/([^\n])\n(•\s)/g, '$1\n\n$2')
+    .replace(/([^\n])\n(-\s)/g, '$1\n\n$2')
     .replace(/([^\n])\n([0-9]+\.\s)/g, '$1\n\n$2')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+
   return cleaned;
 };
 
@@ -1123,12 +1138,12 @@ const ensureEmojiInReply = (text: string, prompt: string): string => {
   if (/[\u{1F300}-\u{1FAFF}]/u.test(value)) return value;
   const p = String(prompt || '').toLowerCase();
   const emoji =
-    /(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p) ? '💻'
-    : /(math|calculate|equation|solve)/.test(p) ? '🧮'
-      : /(latest|today|current|news|market|price|as of)/.test(p) ? '🗓️'
-        : /(plan|goal|productivity|life|discipline|focus)/.test(p) ? '🎯'
-          : isGreetingPrompt(p) ? '👋'
-            : '✅';
+    /(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p) ? '\u{1F4BB}'
+    : /(math|calculate|equation|solve)/.test(p) ? '\u{1F9EE}'
+      : /(latest|today|current|news|market|price|as of)/.test(p) ? '\u{1F5D3}\uFE0F'
+        : /(plan|goal|productivity|life|discipline|focus)/.test(p) ? '\u{1F3AF}'
+          : isGreetingPrompt(p) ? '\u{1F44B}'
+            : '\u2705';
   return `${emoji} ${value}`;
 };
 
@@ -3364,5 +3379,4 @@ process.on('SIGINT', () => {
     console.log('Process terminated');
   });
 });
-
 
