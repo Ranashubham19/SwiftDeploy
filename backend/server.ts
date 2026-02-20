@@ -720,7 +720,10 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(help|support|issue|error|problem|bug|not working)/.test(lower)) {
     return 'I can help. Share the exact error and I will give you a direct fix.';
   }
-  return 'I can answer this. Give me one specific goal and your current situation in one line, and I will give a direct action plan.';
+  if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|algorithm|leetcode)/.test(lower)) {
+    return 'Yes, I can help with coding. Send the exact problem statement and preferred language, and I will provide a correct solution with explanation.';
+  }
+  return 'I can help with this. Share one clear question or goal, and I will provide a direct professional answer.';
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -1006,6 +1009,9 @@ const instantProfessionalReply = (text: string): string | null => {
   if (/^(hi|hii|hello|hey|yo)\b/.test(q)) {
     return 'Hello. Ask your question and I will give a direct professional answer.';
   }
+  if (/(can you do coding|do you know coding|can you code|are you good at coding)/.test(q)) {
+    return 'Yes. I can write, debug, optimize, and explain code in Python, JavaScript/TypeScript, Java, C++, SQL, and more. Share the exact problem and preferred language.';
+  }
   if (/who are you|what are you/.test(q)) {
     return 'I am SwiftDeploy AI. I can help with coding, strategy, learning, troubleshooting, and practical planning.';
   }
@@ -1020,6 +1026,36 @@ const instantProfessionalReply = (text: string): string | null => {
   }
   if (/motivate me|motivation|i am lazy|procrastinating/.test(q)) {
     return 'Do not wait for motivation. Use action first: pick one 20-minute task, start a timer, finish it, then continue one more cycle.';
+  }
+  if (/rat in a maze|maze problem/.test(q)) {
+    return `Yes. Here is a clean Python solution for "Rat in a Maze" using DFS and backtracking:
+
+\`\`\`python
+def rat_in_maze_paths(maze):
+    n = len(maze)
+    if n == 0 or maze[0][0] == 0 or maze[n - 1][n - 1] == 0:
+        return []
+
+    directions = [('D', 1, 0), ('L', 0, -1), ('R', 0, 1), ('U', -1, 0)]
+    visited = [[False] * n for _ in range(n)]
+    result = []
+
+    def dfs(r, c, path):
+        if r == n - 1 and c == n - 1:
+            result.append(path)
+            return
+        visited[r][c] = True
+        for ch, dr, dc in directions:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < n and 0 <= nc < n and not visited[nr][nc] and maze[nr][nc] == 1:
+                dfs(nr, nc, path + ch)
+        visited[r][c] = False
+
+    dfs(0, 0, "")
+    return sorted(result)
+\`\`\`
+
+If you want, I can also give C++ or Java version.`;
   }
   if (/what should i do now|next step/.test(q)) {
     return 'Immediate next step: define one priority, break it into 3 tasks, complete task 1 in the next 30 minutes.';
@@ -1117,7 +1153,7 @@ const sendTelegramReply = async (targetBot: TelegramBot, chatId: number, text: s
   const safe = sanitizeForTelegram(stripReconnectLoopReply(text));
   const chunks = splitTelegramMessage(safe);
   for (let i = 0; i < chunks.length; i += 1) {
-    await targetBot.sendMessage(chatId, chunks[i], i === 0 && replyTo ? { reply_to_message_id: replyTo } : {});
+    await targetBot.sendMessage(chatId, chunks[i], {});
   }
 };
 
