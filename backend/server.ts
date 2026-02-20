@@ -146,12 +146,19 @@ type UserProfile = {
   preferredTone?: 'professional' | 'formal' | 'casual' | 'concise';
   prefersConcise?: boolean;
   assistantName?: string;
+  emojiStyle?: 'rich' | 'minimal';
+  stickersEnabled?: boolean;
   recurringTopics: string[];
   topicCounts: Record<string, number>;
   updatedAt: number;
 };
 const userProfiles = new Map<string, UserProfile>();
 const DEFAULT_ASSISTANT_NAME = (process.env.BOT_ASSISTANT_NAME || 'SwiftDeploy AI').trim() || 'SwiftDeploy AI';
+const TG_STICKER_GREETING_ID = (process.env.TG_STICKER_GREETING_ID || '').trim();
+const TG_STICKER_SUCCESS_ID = (process.env.TG_STICKER_SUCCESS_ID || '').trim();
+const TG_STICKER_CODING_ID = (process.env.TG_STICKER_CODING_ID || '').trim();
+const TG_STICKER_MATH_ID = (process.env.TG_STICKER_MATH_ID || '').trim();
+const TG_STICKER_MOTIVATION_ID = (process.env.TG_STICKER_MOTIVATION_ID || '').trim();
 const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
@@ -1402,13 +1409,55 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
   const cmd = text.match(/^\/([a-z]+)(?:@\w+)?\b/i)?.[1]?.toLowerCase();
   if (!cmd) return null;
   if (cmd === 'help') {
-    return 'Commands:\n/start - welcome message\n/help - show commands\n/reset - clear chat memory\n\nAsk any question directly after these commands.';
+    return 'Commands:\n/start - welcome message\n/help - show commands\n/reset - clear chat memory\n/stickers on|off|status - sticker replies\n/emoji rich|minimal|status - emoji style\n\nAsk any question directly after these commands.';
   }
   if (cmd === 'reset') {
     if (conversationKey) {
       clearConversationState(conversationKey);
     }
     return 'Your chat memory for this bot has been cleared. Start a new question.';
+  }
+  if (cmd === 'stickers') {
+    const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
+    if (!conversationKey) return 'Sticker settings are unavailable in this context.';
+    if (!mode || mode === 'status') {
+      const enabled = userProfiles.get(conversationKey)?.stickersEnabled !== false;
+      return enabled ? 'Stickers are ON.' : 'Stickers are OFF.';
+    }
+    if (!['on', 'off'].includes(mode)) {
+      return 'Use: /stickers on, /stickers off, or /stickers status';
+    }
+    const current = userProfiles.get(conversationKey) || {
+      recurringTopics: [],
+      topicCounts: {},
+      updatedAt: Date.now()
+    };
+    current.stickersEnabled = mode === 'on';
+    current.updatedAt = Date.now();
+    userProfiles.set(conversationKey, current);
+    persistUserProfiles();
+    return current.stickersEnabled ? 'Stickers enabled for this chat.' : 'Stickers disabled for this chat.';
+  }
+  if (cmd === 'emoji') {
+    const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
+    if (!conversationKey) return 'Emoji settings are unavailable in this context.';
+    if (!mode || mode === 'status') {
+      const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
+      return `Emoji style is ${style.toUpperCase()}.`;
+    }
+    if (!['rich', 'minimal'].includes(mode)) {
+      return 'Use: /emoji rich, /emoji minimal, or /emoji status';
+    }
+    const current = userProfiles.get(conversationKey) || {
+      recurringTopics: [],
+      topicCounts: {},
+      updatedAt: Date.now()
+    };
+    current.emojiStyle = mode as 'rich' | 'minimal';
+    current.updatedAt = Date.now();
+    userProfiles.set(conversationKey, current);
+    persistUserProfiles();
+    return `Emoji style set to ${mode.toUpperCase()} for this chat.`;
   }
   return null;
 };
@@ -1588,6 +1637,8 @@ const loadUserProfiles = (): void => {
         preferredTone: profile?.preferredTone,
         prefersConcise: Boolean(profile?.prefersConcise),
         assistantName: sanitizeAssistantName(profile?.assistantName || '') || undefined,
+        emojiStyle: profile?.emojiStyle === 'minimal' ? 'minimal' : 'rich',
+        stickersEnabled: profile?.stickersEnabled !== false,
         recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
         topicCounts: typeof profile?.topicCounts === 'object' && profile.topicCounts ? profile.topicCounts : {},
         updatedAt: Number(profile?.updatedAt || Date.now())
@@ -1704,6 +1755,27 @@ const applyAssistantIdentityPolicy = (text: string, conversationKey?: string): s
   return out
     .replace(/\bSwiftDeploy AI assistant\b/gi, `${preferredName} assistant`)
     .replace(/\bSwiftDeploy AI\b/gi, preferredName);
+};
+
+const applyEmojiStylePolicy = (text: string, conversationKey?: string): string => {
+  const out = String(text || '').trim();
+  if (!out || !conversationKey) return out;
+  const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
+  if (style !== 'minimal') return out;
+  return out
+    .replace(/^[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713\u{1F539}\u{1F3C1}]\s*/gu, '')
+    .replace(/\n{2}[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713\u{1F539}\u{1F3C1}]\s*$/gu, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+};
+
+const pickStickerForContext = (prompt: string, answer: string): string => {
+  const p = `${String(prompt || '').toLowerCase()} ${String(answer || '').toLowerCase()}`;
+  if (isGreetingPrompt(p)) return TG_STICKER_GREETING_ID;
+  if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p)) return TG_STICKER_CODING_ID;
+  if (/(math|calculate|equation|solve|number|prime|pi)/.test(p)) return TG_STICKER_MATH_ID;
+  if (/(motivate|discipline|focus|goal|plan|success)/.test(p)) return TG_STICKER_MOTIVATION_ID;
+  return TG_STICKER_SUCCESS_ID;
 };
 
 const detectIntent = (text: string): 'math' | 'current_event' | 'coding' | 'general' => {
@@ -1860,9 +1932,11 @@ const generateProfessionalReply = async (
         trimmedInput
       );
       clean = applyAssistantIdentityPolicy(clean, conversationKey);
+      clean = applyEmojiStylePolicy(clean, conversationKey);
       if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, trimmedInput))) {
         clean = instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput);
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
+        clean = applyEmojiStylePolicy(clean, conversationKey);
       }
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
         const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
@@ -1876,6 +1950,7 @@ const generateProfessionalReply = async (
           trimmedInput
         );
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
+        clean = applyEmojiStylePolicy(clean, conversationKey);
       }
       const shouldRetry = AI_MAX_RETRY_PASSES > 0
         && !isSimplePrompt(trimmedInput)
@@ -1893,12 +1968,14 @@ const generateProfessionalReply = async (
           trimmedInput
         );
         retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
+        retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
           retryClean = ensureEmojiInReply(
             formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt), trimmedInput),
             trimmedInput
           );
           retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
+          retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
         }
         appendChatHistory(conversationKey, trimmedInput, retryClean);
         if (!timeSensitive) {
@@ -1922,6 +1999,7 @@ const generateProfessionalReply = async (
           trimmedInput
         );
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
+        clean = applyEmojiStylePolicy(clean, conversationKey);
       }
       appendChatHistory(conversationKey, trimmedInput, clean);
       if (!timeSensitive) {
@@ -1953,10 +2031,10 @@ const generateProfessionalReply = async (
           'Fallback AI response timeout'
         );
         const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
-        const clean = applyAssistantIdentityPolicy(ensureEmojiInReply(
+        const clean = applyEmojiStylePolicy(applyAssistantIdentityPolicy(ensureEmojiInReply(
           fallbackPolished,
           trimmedInput
-        ), conversationKey);
+        ), conversationKey), conversationKey);
         appendChatHistory(conversationKey, trimmedInput, clean);
         if (!timeSensitive) {
           aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
@@ -2007,12 +2085,20 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
   console.log(`[TELEGRAM] Received message from ${msg.from?.username || 'Unknown'}: ${messageText}`);
   try {
     await bot.sendChatAction(chatId, 'typing');
+    const conversationKey = buildConversationKey('telegram:primary', chatId) || undefined;
     const response = await sendTelegramStreamingReply(
       bot,
       chatId,
       generateProfessionalReply(messageText, chatId, 'telegram:primary'),
       msg.message_id
     );
+    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
+    const stickerId = stickersEnabled ? pickStickerForContext(messageText, response) : '';
+    if (stickerId) {
+      try {
+        await bot.sendSticker(chatId, stickerId, { reply_to_message_id: msg.message_id });
+      } catch {}
+    }
     console.log(`[TELEGRAM] Sending response length=${response.length}`);
   } catch (error) {
     console.error('[TELEGRAM] Failed to handle message:', error);
@@ -2083,12 +2169,20 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   try {
     const startedAt = Date.now();
     await botInstance.sendChatAction(chatId, 'typing');
+    const conversationKey = buildConversationKey(botScope, chatId) || undefined;
     const aiReply = await sendTelegramStreamingReply(
       botInstance,
       chatId,
       generateProfessionalReply(text, chatId, botScope),
       msg.message_id
     );
+    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
+    const stickerId = stickersEnabled ? pickStickerForContext(text, aiReply) : '';
+    if (stickerId) {
+      try {
+        await botInstance.sendSticker(chatId, stickerId, { reply_to_message_id: msg.message_id });
+      } catch {}
+    }
     if (botId) recordBotResponse(botId, aiReply, Date.now() - startedAt);
   } catch (err) {
     console.error(`[BOT_${botToken.substring(0, 8)}_FAIL] Failed to route signal:`, err);
