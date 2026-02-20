@@ -175,6 +175,9 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
                 disabled
                 className="relative flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all bg-transparent border-white/10 opacity-55 cursor-not-allowed"
               >
+                <span className="absolute -top-2 right-3 text-[10px] font-black uppercase tracking-widest bg-orange-500 text-white px-3 py-1 rounded-full shadow-[0_0_14px_rgba(249,115,22,0.45)]">
+                  High Demand
+                </span>
                 <div className="w-8 h-8 flex items-center justify-center shrink-0">
                   <ICONS.WhatsApp className="w-8 h-8" />
                 </div>
