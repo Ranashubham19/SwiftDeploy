@@ -2216,13 +2216,16 @@ app.post('/forgot-password/reset', async (req, res) => {
 
 app.get('/billing/stripe-account', requireAuth, (req, res) => {
   const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
+  const stripePublishableKey = (process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
   const configured = stripeSecretKey.startsWith('sk_');
+  const publishableConfigured = stripePublishableKey.startsWith('pk_');
   const mode = stripeSecretKey.startsWith('sk_live_') ? 'live' : 'test';
   const accountLabel = (process.env.STRIPE_ACCOUNT_LABEL || 'Stripe Secure Checkout').trim();
 
   return res.json({
     success: true,
     configured,
+    publishableConfigured,
     mode: configured ? mode : 'not_configured',
     accountLabel,
     processor: 'Stripe'
