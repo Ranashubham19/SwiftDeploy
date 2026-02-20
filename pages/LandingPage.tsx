@@ -19,10 +19,8 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
     if (user) {
       if (selectedPlatform === Platform.TELEGRAM) {
         navigate('/connect/telegram', { state: { model: selectedModel } });
-      } else if (selectedPlatform === Platform.DISCORD) {
-        navigate('/connect/discord', { state: { model: selectedModel } });
       } else {
-        navigate('/contact');
+        return;
       }
     } else {
       navigate('/login?mode=register');
@@ -159,26 +157,31 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
               </button>
 
               <button
-                onClick={() => setSelectedPlatform(Platform.DISCORD)}
-                className={`flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all ${selectedPlatform === Platform.DISCORD ? 'bg-white/5 border-white/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]' : 'bg-transparent border-white/10 hover:border-white/20'}`}
+                type="button"
+                disabled
+                className="flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all bg-transparent border-white/10 opacity-55 cursor-not-allowed"
               >
                 <div className="w-8 h-8 flex items-center justify-center shrink-0">
                   <ICONS.Discord className="w-8 h-8" />
                 </div>
-                <span className="text-[16px] font-bold text-zinc-100">Discord</span>
+                <div className="flex flex-col items-start">
+                  <span className="text-[16px] font-bold text-zinc-100">Discord</span>
+                  <span className="text-[11px] font-black uppercase tracking-widest text-zinc-500">Coming soon</span>
+                </div>
               </button>
 
               <button
-                onClick={() => setSelectedPlatform(Platform.WHATSAPP)}
-                className={`relative flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all ${selectedPlatform === Platform.WHATSAPP ? 'bg-white/5 border-white/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]' : 'bg-transparent border-white/10 hover:border-white/20'}`}
+                type="button"
+                disabled
+                className="relative flex items-center gap-4 px-6 py-5 rounded-[24px] border transition-all bg-transparent border-white/10 opacity-55 cursor-not-allowed"
               >
-                <span className="absolute -top-2 right-3 text-[10px] font-black uppercase tracking-widest bg-orange-500 text-white px-3 py-1 rounded-full shadow-[0_0_14px_rgba(249,115,22,0.45)]">
-                  High Demand
-                </span>
                 <div className="w-8 h-8 flex items-center justify-center shrink-0">
                   <ICONS.WhatsApp className="w-8 h-8" />
                 </div>
-                <span className="text-[16px] font-bold text-zinc-100">WhatsApp</span>
+                <div className="flex flex-col items-start">
+                  <span className="text-[16px] font-bold text-zinc-100">WhatsApp</span>
+                  <span className="text-[11px] font-black uppercase tracking-widest text-zinc-500">Coming soon</span>
+                </div>
               </button>
             </div>
           </div>
