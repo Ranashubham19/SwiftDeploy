@@ -103,6 +103,8 @@ const INITIAL_BOT_CREDIT_USD = Math.max(1, parseInt(process.env.BOT_INITIAL_CRED
 const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '120000', 10));
 const CREDIT_DEDUCT_AMOUNT_USD = Math.max(1, parseInt(process.env.BOT_CREDIT_DEDUCT_AMOUNT_USD || '1', 10));
 const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'false').trim().toLowerCase() === 'true';
+const CREDIT_ENFORCEMENT_PAUSED = (process.env.BOT_CREDIT_ENFORCEMENT_PAUSED || 'true').trim().toLowerCase() !== 'false';
+const CREDIT_ENFORCEMENT_ACTIVE = CREDIT_ENFORCEMENT_ENABLED && !CREDIT_ENFORCEMENT_PAUSED;
 const processedCreditSessions = new Set<string>();
 type TelegramBotConfig = {
   botId: string;
@@ -330,7 +332,7 @@ const ensureBotCreditState = (botId: string): BotCreditState => {
 
 const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditState => {
   const state = ensureBotCreditState(botId);
-  if (!CREDIT_ENFORCEMENT_ENABLED) {
+  if (!CREDIT_ENFORCEMENT_ACTIVE) {
     // Paused mode: no deduction and no depletion lock.
     state.depleted = false;
     state.updatedAt = now;
@@ -2191,7 +2193,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   const botId = getBotIdByTelegramToken(botToken);
 
   if (!text) return;
-  if (botId && CREDIT_ENFORCEMENT_ENABLED) {
+  if (botId && CREDIT_ENFORCEMENT_ACTIVE) {
     const credit = applyCreditDecay(botId);
     if (credit.depleted || credit.remainingUsd <= 0) {
       const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
@@ -3885,7 +3887,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   });
 });
 
-const creditDecayTimer = CREDIT_ENFORCEMENT_ENABLED
+const creditDecayTimer = CREDIT_ENFORCEMENT_ACTIVE
   ? setInterval(() => {
     let changed = false;
     for (const botId of botTokens.keys()) {
