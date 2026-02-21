@@ -101,9 +101,12 @@ type BotCreditState = {
   updatedAt: number;
 };
 const botCredits = new Map<string, BotCreditState>();
-const INITIAL_BOT_CREDIT_USD = Math.max(1, parseInt(process.env.BOT_INITIAL_CREDIT_USD || '10', 10));
-const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '129600000', 10));
-const CREDIT_DEDUCT_AMOUNT_USD = Math.max(1, parseInt(process.env.BOT_CREDIT_DEDUCT_AMOUNT_USD || '1', 10));
+// Credit policy (locked by product requirement):
+// - Initial credit: $10
+// - Deduction: $1 every 1.5 days (36 hours)
+const INITIAL_BOT_CREDIT_USD = 10;
+const CREDIT_DEDUCT_INTERVAL_MS = 36 * 60 * 60 * 1000;
+const CREDIT_DEDUCT_AMOUNT_USD = 1;
 const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'true').trim().toLowerCase() === 'true';
 const CREDIT_ENFORCEMENT_PAUSED = (process.env.BOT_CREDIT_ENFORCEMENT_PAUSED || 'false').trim().toLowerCase() !== 'false';
 const CREDIT_ENFORCEMENT_ACTIVE = CREDIT_ENFORCEMENT_ENABLED && !CREDIT_ENFORCEMENT_PAUSED;
