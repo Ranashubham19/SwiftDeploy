@@ -152,7 +152,7 @@ const CHAT_HISTORY_MAX_TURNS = parseInt(process.env.CHAT_HISTORY_MAX_TURNS || '1
 const CHAT_HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = parseInt(process.env.AI_CACHE_MAX_ENTRIES || '800', 10);
-const RESPONSE_STYLE_VERSION = 'pro_layout_v2';
+const RESPONSE_STYLE_VERSION = 'pro_layout_v3';
 const MAX_USER_PROMPT_LENGTH = parseInt(process.env.MAX_USER_PROMPT_LENGTH || '6000', 10);
 const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -181,6 +181,19 @@ const TG_STICKER_SUCCESS_ID = (process.env.TG_STICKER_SUCCESS_ID || '').trim();
 const TG_STICKER_CODING_ID = (process.env.TG_STICKER_CODING_ID || '').trim();
 const TG_STICKER_MATH_ID = (process.env.TG_STICKER_MATH_ID || '').trim();
 const TG_STICKER_MOTIVATION_ID = (process.env.TG_STICKER_MOTIVATION_ID || '').trim();
+const parseStickerPool = (csvRaw: string, singleFallback: string): string[] => {
+  const fromCsv = String(csvRaw || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set([...fromCsv, String(singleFallback || '').trim()].filter(Boolean)));
+  return unique;
+};
+const TG_STICKER_GREETING_IDS = parseStickerPool(process.env.TG_STICKER_GREETING_IDS || '', TG_STICKER_GREETING_ID);
+const TG_STICKER_SUCCESS_IDS = parseStickerPool(process.env.TG_STICKER_SUCCESS_IDS || '', TG_STICKER_SUCCESS_ID);
+const TG_STICKER_CODING_IDS = parseStickerPool(process.env.TG_STICKER_CODING_IDS || '', TG_STICKER_CODING_ID);
+const TG_STICKER_MATH_IDS = parseStickerPool(process.env.TG_STICKER_MATH_IDS || '', TG_STICKER_MATH_ID);
+const TG_STICKER_MOTIVATION_IDS = parseStickerPool(process.env.TG_STICKER_MOTIVATION_IDS || '', TG_STICKER_MOTIVATION_ID);
 const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
@@ -1193,6 +1206,12 @@ const toSentenceChunks = (text: string): string[] => {
     .filter(Boolean);
 };
 
+const pickFromPool = (pool: string[]): string => {
+  if (!Array.isArray(pool) || pool.length === 0) return '';
+  const idx = Math.floor(Math.random() * pool.length);
+  return pool[idx] || '';
+};
+
 const isGreetingPrompt = (text: string): boolean => {
   const v = String(text || '').trim().toLowerCase();
   return /^(hi|hii|hello|hey|yo|good morning|good afternoon|good evening)\b[!. ]*$/.test(v);
@@ -1312,6 +1331,31 @@ const normalizeParagraphFlow = (text: string): string => {
     .trim();
 };
 
+const isComparisonPrompt = (prompt: string): boolean => {
+  const q = String(prompt || '').toLowerCase();
+  return /(compare|comparison|difference|vs\b|versus|better than|pros and cons|pros & cons|advantages and disadvantages)/.test(q);
+};
+
+const isPointWisePrompt = (prompt: string): boolean => {
+  const q = String(prompt || '').toLowerCase();
+  return /(points|list|step by step|steps|plan|roadmap|compare|difference|pros|cons)/.test(q);
+};
+
+const enforceStructuredPoints = (prompt: string, text: string): string => {
+  const value = String(text || '').trim();
+  if (!value || value.includes('```')) return value;
+  if (!isPointWisePrompt(prompt)) return value;
+  if (/\n\s*(-|\*|\d+\.)\s+/.test(value)) return value;
+
+  const sentences = toSentenceChunks(value);
+  if (sentences.length < 2) return value;
+  const lead = sentences[0];
+  const maxItems = isComparisonPrompt(prompt) ? 5 : 4;
+  const items = sentences.slice(1, 1 + maxItems).map((s, i) => `${i + 1}. ${s}`);
+  const label = isComparisonPrompt(prompt) ? 'Comparison Points' : 'Key Points';
+  return `${lead}\n\n${label}:\n${items.join('\n')}`.trim();
+};
+
 const formatProfessionalResponse = (text: string, prompt: string): string => {
   const raw = sanitizeForTelegram(text);
   if (!raw) return raw;
@@ -1377,6 +1421,7 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     cleaned = chunks.length > 4 ? chunks.join(' ') : cleaned;
   }
 
+  cleaned = enforceStructuredPoints(prompt, cleaned);
   return applyProfessionalLayout(cleaned);
 };
 
@@ -1401,8 +1446,8 @@ const applyProfessionalLayout = (text: string): string => {
 };
 
 const getEmojiStyleForConversation = (conversationKey?: string): 'rich' | 'minimal' => {
-  if (!conversationKey) return 'minimal';
-  return userProfiles.get(conversationKey)?.emojiStyle === 'rich' ? 'rich' : 'minimal';
+  if (!conversationKey) return 'rich';
+  return userProfiles.get(conversationKey)?.emojiStyle === 'minimal' ? 'minimal' : 'rich';
 };
 
 const ensureEmojiInReply = (text: string, prompt: string, conversationKey?: string): string => {
@@ -1652,7 +1697,7 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
     if (!conversationKey) return 'Sticker settings are unavailable in this context.';
     if (!mode || mode === 'status') {
-      const enabled = userProfiles.get(conversationKey)?.stickersEnabled === true;
+      const enabled = userProfiles.get(conversationKey)?.stickersEnabled !== false;
       return enabled ? 'Stickers are ON.' : 'Stickers are OFF.';
     }
     if (!['on', 'off'].includes(mode)) {
@@ -1673,7 +1718,7 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
     if (!conversationKey) return 'Emoji settings are unavailable in this context.';
     if (!mode || mode === 'status') {
-      const style = userProfiles.get(conversationKey)?.emojiStyle || 'minimal';
+      const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
       return `Emoji style is ${style.toUpperCase()}.`;
     }
     if (!['rich', 'minimal'].includes(mode)) {
@@ -1878,8 +1923,8 @@ const loadUserProfiles = (): void => {
         preferredTone: profile?.preferredTone,
         prefersConcise: Boolean(profile?.prefersConcise),
         assistantName: sanitizeAssistantName(profile?.assistantName || '') || undefined,
-        emojiStyle: profile?.emojiStyle === 'rich' ? 'rich' : 'minimal',
-        stickersEnabled: profile?.stickersEnabled === true,
+        emojiStyle: profile?.emojiStyle === 'minimal' ? 'minimal' : 'rich',
+        stickersEnabled: profile?.stickersEnabled !== false,
         recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
         topicCounts: typeof profile?.topicCounts === 'object' && profile.topicCounts ? profile.topicCounts : {},
         updatedAt: Number(profile?.updatedAt || Date.now())
@@ -1894,8 +1939,8 @@ const updateUserProfile = (conversationKey: string | undefined, userText: string
   if (!conversationKey) return undefined;
   const current = userProfiles.get(conversationKey) || {
     preferredTone: 'professional' as const,
-    emojiStyle: 'minimal' as const,
-    stickersEnabled: false,
+    emojiStyle: 'rich' as const,
+    stickersEnabled: true,
     recurringTopics: [],
     topicCounts: {},
     updatedAt: Date.now()
@@ -1980,11 +2025,12 @@ Rules:
 - Use a professional, calm tone and clean formatting.
 - Give the direct answer first, then concise explanation.
 - Use short sections or bullets only when they improve clarity.
+- For compare/difference questions, provide point-wise comparison.
 - For coding, provide runnable code and mention key assumptions.
 - Never hallucinate facts, links, or references.
 - If a question is ambiguous, ask one precise clarifying question.
 - For time-sensitive questions, prefer verified current facts and state uncertainty briefly when needed.
-- Avoid decorative emoji, hype language, and filler text unless explicitly requested.
+- Use relevant professional emoji sparingly to improve readability.
 ${modeBlock}
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
 ${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
@@ -2006,7 +2052,7 @@ const applyAssistantIdentityPolicy = (text: string, conversationKey?: string): s
 const applyEmojiStylePolicy = (text: string, conversationKey?: string): string => {
   const out = String(text || '').trim();
   if (!out || !conversationKey) return out;
-  const style = userProfiles.get(conversationKey)?.emojiStyle || 'minimal';
+  const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
   if (style !== 'minimal') return out;
   return out
     .replace(/^[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713\u{1F539}\u{1F3C1}]\s*/gu, '')
@@ -2017,11 +2063,11 @@ const applyEmojiStylePolicy = (text: string, conversationKey?: string): string =
 
 const pickStickerForContext = (prompt: string, answer: string): string => {
   const p = `${String(prompt || '').toLowerCase()} ${String(answer || '').toLowerCase()}`;
-  if (isGreetingPrompt(p)) return TG_STICKER_GREETING_ID;
-  if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p)) return TG_STICKER_CODING_ID;
-  if (/(math|calculate|equation|solve|number|prime|pi)/.test(p)) return TG_STICKER_MATH_ID;
-  if (/(motivate|discipline|focus|goal|plan|success)/.test(p)) return TG_STICKER_MOTIVATION_ID;
-  return TG_STICKER_SUCCESS_ID;
+  if (isGreetingPrompt(p)) return pickFromPool(TG_STICKER_GREETING_IDS);
+  if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p)) return pickFromPool(TG_STICKER_CODING_IDS);
+  if (/(math|calculate|equation|solve|number|prime|pi)/.test(p)) return pickFromPool(TG_STICKER_MATH_IDS);
+  if (/(motivate|discipline|focus|goal|plan|success)/.test(p)) return pickFromPool(TG_STICKER_MOTIVATION_IDS);
+  return pickFromPool(TG_STICKER_SUCCESS_IDS);
 };
 
 const detectIntent = (text: string): 'math' | 'current_event' | 'coding' | 'general' => {
@@ -2354,7 +2400,7 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
       generateProfessionalReply(messageText, chatId, 'telegram:primary'),
       msg.message_id
     );
-    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled === true) : false;
+    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
     const stickerId = stickersEnabled ? pickStickerForContext(messageText, response) : '';
     if (stickerId) {
       try {
@@ -2454,7 +2500,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
       }),
       msg.message_id
     );
-    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled === true) : false;
+    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
     const stickerId = stickersEnabled ? pickStickerForContext(text, aiReply) : '';
     if (stickerId) {
       try {
