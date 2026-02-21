@@ -18,7 +18,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   const handleDeploymentInit = () => {
     if (user) {
       if (selectedPlatform === Platform.TELEGRAM) {
-        navigate('/connect/telegram', { state: { model: selectedModel } });
+        navigate('/connect/telegram?entry=deploy', { state: { model: selectedModel } });
       } else {
         return;
       }

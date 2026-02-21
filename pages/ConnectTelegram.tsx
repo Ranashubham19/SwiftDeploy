@@ -22,6 +22,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const stageIntentId = urlParams.get('intentId') || '';
   const stageSessionId = urlParams.get('session_id') || '';
   const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
+  const forceTokenEntry = urlParams.get('entry') === 'deploy';
   const hasExistingTelegramBot = bots.some((b) => b.platform === Platform.TELEGRAM);
   const selectedModel = String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH;
 
@@ -31,6 +32,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [flowStep, setFlowStep] = useState<FlowStep>(() => {
     if (isSuccessStage) return 'success';
     if (isSubscribeStage) return 'pairing';
+    if (forceTokenEntry) return 'token';
     if (!hasExistingTelegramBot && !Boolean(user?.isSubscribed)) return 'subscription';
     return 'token';
   });
@@ -101,16 +103,21 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   }, [hasExistingTelegramBot]);
 
   useEffect(() => {
-    if (isSuccessStage || isSubscribeStage || hasExistingTelegramBot) return;
+    if (isSuccessStage || isSubscribeStage) return;
+    if (forceTokenEntry) {
+      setFlowStep('token');
+      return;
+    }
+    if (hasExistingTelegramBot) return;
     setFlowStep((current) => {
       if (current === 'success' || current === 'send-first-message') return current;
       return hasTelegramSubscription ? 'token' : 'subscription';
     });
-  }, [isSuccessStage, isSubscribeStage, hasExistingTelegramBot, hasTelegramSubscription]);
+  }, [isSuccessStage, isSubscribeStage, forceTokenEntry, hasExistingTelegramBot, hasTelegramSubscription]);
 
   // Existing users who already have an active Telegram bot should land on the credits page directly.
   useEffect(() => {
-    if (isSuccessStage || isSubscribeStage) return;
+    if (isSuccessStage || isSubscribeStage || forceTokenEntry) return;
     const existingBot = bots.find((b) => b.platform === Platform.TELEGRAM);
     if (!existingBot) return;
 
@@ -122,7 +129,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       (existingBot.name?.startsWith('@') ? existingBot.name.slice(1) : '');
     if (username) params.set('bot', username);
     navigate(`/connect/telegram?${params.toString()}`, { replace: true, state: location.state });
-  }, [isSuccessStage, isSubscribeStage, bots, navigate]);
+  }, [isSuccessStage, isSubscribeStage, forceTokenEntry, bots, navigate]);
 
   // Keep UI state in sync when the URL contains a success stage (e.g., redirected from Stripe or deep link).
   useEffect(() => {
