@@ -1440,7 +1440,7 @@ const isAcceptableShortAnswer = (answer: string, prompt: string): boolean => {
 const isLowValueDeflectionReply = (text: string): boolean => {
   const v = String(text || '').toLowerCase().trim();
   if (!v) return true;
-  return /(i can help with this\.?\s*share one clear question|share one clear question or goal|direct professional answer)/.test(v);
+  return /(i can help with this\.?\s*share one clear question|share one clear question or goal|direct professional answer|i am ready to help.*ask your question|ready to help.*(ask|share).*(question|goal))/s.test(v);
 };
 
 const enforceProfessionalReplyQuality = (prompt: string, reply: string, conversationKey?: string): string => {
