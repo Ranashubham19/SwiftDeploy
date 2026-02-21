@@ -1349,20 +1349,6 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-  // Add slight professional depth for very short plain-text answers.
-  if (!cleaned.includes('```')) {
-    const sentences = toSentenceChunks(cleaned);
-    if (sentences.length <= 1 && cleaned.length > 0) {
-      if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/i.test(prompt)) {
-        cleaned = `${cleaned} If you share your exact requirements, I can provide a production-ready version.`;
-      } else if (/(math|calculate|equation|solve|value|number|prime|pi)/i.test(prompt)) {
-        cleaned = `${cleaned} I can also show the derivation step-by-step if you want.`;
-      } else {
-        cleaned = `${cleaned} If you want, I can expand this with practical steps tailored to your goal.`;
-      }
-    }
-  }
-
   cleaned = applyProfessionalLayout(cleaned);
   return cleaned;
 };
@@ -1389,9 +1375,17 @@ const applyProfessionalLayout = (text: string): string => {
     .trim();
 };
 
-const ensureEmojiInReply = (text: string, prompt: string): string => {
+const getEmojiStyleForConversation = (conversationKey?: string): 'rich' | 'minimal' => {
+  if (!conversationKey) return 'minimal';
+  return userProfiles.get(conversationKey)?.emojiStyle === 'rich' ? 'rich' : 'minimal';
+};
+
+const ensureEmojiInReply = (text: string, prompt: string, conversationKey?: string): string => {
   const value = String(text || '').trim();
   if (!value) return 'Got it.';
+  if (getEmojiStyleForConversation(conversationKey) !== 'rich') {
+    return value;
+  }
   const p = `${String(prompt || '').toLowerCase()} ${value.toLowerCase()}`;
   const emoji =
     /(code|coding|python|javascript|typescript|java|c\+\+|sql|bug|algorithm)/.test(p) ? '\u{1F4BB}'
@@ -1633,7 +1627,7 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
     if (!conversationKey) return 'Sticker settings are unavailable in this context.';
     if (!mode || mode === 'status') {
-      const enabled = userProfiles.get(conversationKey)?.stickersEnabled !== false;
+      const enabled = userProfiles.get(conversationKey)?.stickersEnabled === true;
       return enabled ? 'Stickers are ON.' : 'Stickers are OFF.';
     }
     if (!['on', 'off'].includes(mode)) {
@@ -1654,7 +1648,7 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
     if (!conversationKey) return 'Emoji settings are unavailable in this context.';
     if (!mode || mode === 'status') {
-      const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
+      const style = userProfiles.get(conversationKey)?.emojiStyle || 'minimal';
       return `Emoji style is ${style.toUpperCase()}.`;
     }
     if (!['rich', 'minimal'].includes(mode)) {
@@ -1859,8 +1853,8 @@ const loadUserProfiles = (): void => {
         preferredTone: profile?.preferredTone,
         prefersConcise: Boolean(profile?.prefersConcise),
         assistantName: sanitizeAssistantName(profile?.assistantName || '') || undefined,
-        emojiStyle: profile?.emojiStyle === 'minimal' ? 'minimal' : 'rich',
-        stickersEnabled: profile?.stickersEnabled !== false,
+        emojiStyle: profile?.emojiStyle === 'rich' ? 'rich' : 'minimal',
+        stickersEnabled: profile?.stickersEnabled === true,
         recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
         topicCounts: typeof profile?.topicCounts === 'object' && profile.topicCounts ? profile.topicCounts : {},
         updatedAt: Number(profile?.updatedAt || Date.now())
@@ -1874,6 +1868,9 @@ const loadUserProfiles = (): void => {
 const updateUserProfile = (conversationKey: string | undefined, userText: string): UserProfile | undefined => {
   if (!conversationKey) return undefined;
   const current = userProfiles.get(conversationKey) || {
+    preferredTone: 'professional' as const,
+    emojiStyle: 'minimal' as const,
+    stickersEnabled: false,
     recurringTopics: [],
     topicCounts: {},
     updatedAt: Date.now()
@@ -1954,13 +1951,15 @@ const buildSystemPrompt = (
 You are ${assistantDisplayName}, a high-quality professional assistant.
 
 Rules:
-- Prioritize accuracy over guessing.
-- Keep answers concise, clear, and practical.
-- Default to 3-5 clear sentences for normal questions; be brief only for pure one-line facts.
+- Prioritize correctness over guessing.
+- Use a professional, calm tone and clean formatting.
+- Give the direct answer first, then concise explanation.
+- Use short sections or bullets only when they improve clarity.
+- For coding, provide runnable code and mention key assumptions.
 - Never hallucinate facts, links, or references.
-- If the question is ambiguous, ask one focused clarifying question.
-- For time-sensitive questions, prioritize current verified facts and avoid stale date boilerplate or unnecessary old year mentions.
-- Use structured output only when it helps the user solve the task faster.
+- If a question is ambiguous, ask one precise clarifying question.
+- For time-sensitive questions, prefer verified current facts and state uncertainty briefly when needed.
+- Avoid decorative emoji, hype language, and filler text unless explicitly requested.
 ${modeBlock}
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
 ${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
@@ -1982,7 +1981,7 @@ const applyAssistantIdentityPolicy = (text: string, conversationKey?: string): s
 const applyEmojiStylePolicy = (text: string, conversationKey?: string): string => {
   const out = String(text || '').trim();
   if (!out || !conversationKey) return out;
-  const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
+  const style = userProfiles.get(conversationKey)?.emojiStyle || 'minimal';
   if (style !== 'minimal') return out;
   return out
     .replace(/^[\u{1F300}-\u{1FAFF}\u2705\u2714\u2713\u{1F539}\u{1F3C1}]\s*/gu, '')
@@ -2159,7 +2158,8 @@ const generateProfessionalReply = async (
       const polished = formatProfessionalResponse(response || 'No response generated.', trimmedInput);
       let clean = ensureEmojiInReply(
         polished,
-        trimmedInput
+        trimmedInput,
+        conversationKey
       );
       clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
       clean = applyAssistantIdentityPolicy(clean, conversationKey);
@@ -2179,7 +2179,8 @@ const generateProfessionalReply = async (
         );
         clean = ensureEmojiInReply(
           formatProfessionalResponse(strictRetry || clean, trimmedInput),
-          trimmedInput
+          trimmedInput,
+          conversationKey
         );
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
         clean = applyEmojiStylePolicy(clean, conversationKey);
@@ -2197,7 +2198,8 @@ const generateProfessionalReply = async (
         const retryPolished = formatProfessionalResponse(retry || clean, trimmedInput);
         let retryClean = ensureEmojiInReply(
           retryPolished,
-          trimmedInput
+          trimmedInput,
+          conversationKey
         );
         retryClean = enforceProfessionalReplyQuality(trimmedInput, retryClean, conversationKey);
         retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
@@ -2205,7 +2207,8 @@ const generateProfessionalReply = async (
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
           retryClean = ensureEmojiInReply(
             formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
-            trimmedInput
+            trimmedInput,
+            conversationKey
           );
           retryClean = enforceProfessionalReplyQuality(trimmedInput, retryClean, conversationKey);
           retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
@@ -2230,7 +2233,8 @@ const generateProfessionalReply = async (
       if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
         clean = ensureEmojiInReply(
           formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
-          trimmedInput
+          trimmedInput,
+          conversationKey
         );
         clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
@@ -2266,7 +2270,7 @@ const generateProfessionalReply = async (
           'Fallback AI response timeout'
         );
         const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
-        let clean = ensureEmojiInReply(fallbackPolished, trimmedInput);
+        let clean = ensureEmojiInReply(fallbackPolished, trimmedInput, conversationKey);
         clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
         clean = applyEmojiStylePolicy(clean, conversationKey);
@@ -2325,7 +2329,7 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
       generateProfessionalReply(messageText, chatId, 'telegram:primary'),
       msg.message_id
     );
-    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
+    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled === true) : false;
     const stickerId = stickersEnabled ? pickStickerForContext(messageText, response) : '';
     if (stickerId) {
       try {
@@ -2425,7 +2429,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
       }),
       msg.message_id
     );
-    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
+    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled === true) : false;
     const stickerId = stickersEnabled ? pickStickerForContext(text, aiReply) : '';
     if (stickerId) {
       try {
