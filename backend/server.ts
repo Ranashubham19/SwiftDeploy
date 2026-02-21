@@ -10,8 +10,7 @@ import passport from 'passport';
 import session from 'express-session';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPendingVerifications, isEmailRegistered, markEmailAsRegistered, getUserByEmail, updateUserPassword, storePendingSignup, getPendingSignup, clearPendingSignup } from './emailService.js';
-import { huggingFaceService } from './huggingfaceService.js';
-import { generateBotResponse, estimateTokens, needsRealtimeSearch } from './geminiService.js';
+import { generateBotResponse, estimateTokens, needsRealtimeSearch, type AIRuntimeConfig } from './geminiService.js';
 import { Request } from 'express';
 import bcrypt from 'bcrypt';
 import rateLimit from 'express-rate-limit';
@@ -587,7 +586,7 @@ const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
 
 const app = express();
 const startedAtIso = new Date().toISOString();
-const BOT_LOGIC_VERSION = 'context_guard_v5_2026-02-22';
+const BOT_LOGIC_VERSION = 'model_only_v7_provider_guard_2026-02-22';
 if (isProduction) {
   app.set('trust proxy', 1);
 }
@@ -627,6 +626,25 @@ const TELEGRAM_STREAM_START_DELAY_MS = parseInt(process.env.TELEGRAM_STREAM_STAR
 const TELEGRAM_STREAM_PROGRESS_INTERVAL_MS = parseInt(process.env.TELEGRAM_STREAM_PROGRESS_INTERVAL_MS || '3500', 10);
 const WEBHOOK_SECRET_MASTER = String(process.env.TELEGRAM_WEBHOOK_SECRET || SESSION_SECRET || '').trim();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim();
+
+const hasProviderKey = (provider: string): boolean => {
+  const p = String(provider || '').trim().toLowerCase();
+  if (!p) return false;
+  if (p === 'openai') return Boolean(String(process.env.OPENAI_API_KEY || '').trim());
+  if (p === 'openrouter') return Boolean(String(process.env.OPENROUTER_API_KEY || '').trim());
+  if (p === 'moonshot') return Boolean(String(process.env.MOONSHOT_API_KEY || '').trim());
+  if (p === 'anthropic') return Boolean(String(process.env.ANTHROPIC_API_KEY || '').trim());
+  if (p === 'sarvam') return Boolean(String(process.env.SARVAM_API_KEYS || process.env.SARVAM_API_KEY || '').trim());
+  if (p === 'gemini') return Boolean(String(process.env.GEMINI_API_KEY || '').trim());
+  return false;
+};
+
+const resolveUsableProvider = (preferredProvider?: string): string | undefined => {
+  const preferred = String(preferredProvider || '').trim().toLowerCase();
+  if (preferred && hasProviderKey(preferred)) return preferred;
+  const fallbackOrder = ['openai', 'openrouter', 'moonshot', 'anthropic', 'sarvam', 'gemini'];
+  return fallbackOrder.find((candidate) => hasProviderKey(candidate));
+};
 
 // Rate limiting configuration
 const authRateLimit = rateLimit({
@@ -934,13 +952,8 @@ declare global {
 };
 
 /**
- * Get AI response using Hugging Face API
- * Compliant with Hugging Face requirements
+ * Prompt normalization and relevance guards
  */
-type WikiSearchCandidate = {
-  title: string;
-  snippet: string;
-};
 
 const WIKI_FALLBACK_STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'being', 'been',
@@ -1095,236 +1108,31 @@ const looksOffTopicForDefinitionPrompt = (prompt: string, response: string): boo
   return false;
 };
 
-const isWikipediaResultRelevant = (topic: string, title: string, summary: string): boolean => {
-  const normalizedTopic = String(topic || '').toLowerCase().trim();
-  if (!normalizedTopic) return false;
-  const merged = `${title} ${summary}`.toLowerCase();
-  const variants = expandTopicVariants(normalizedTopic);
-  if (variants.some((variant) => variant && merged.includes(variant))) return true;
-  const tokens = Array.from(new Set(variants.flatMap(tokenizeKnowledgeText)));
-  const hits = countTokenMatches(tokens, merged);
-  if (tokens.length <= 1) return hits >= 1;
-  return hits >= Math.min(2, tokens.length);
-};
-
-const scoreWikipediaCandidate = (topic: string, candidate: WikiSearchCandidate): number => {
-  const variants = expandTopicVariants(topic);
-  const tokens = Array.from(new Set(variants.flatMap(tokenizeKnowledgeText)));
-  const title = String(candidate.title || '').toLowerCase();
-  const snippet = String(candidate.snippet || '').replace(/<[^>]+>/g, ' ').toLowerCase();
-  const merged = `${title} ${snippet}`;
-  let score = 0;
-
-  for (const variant of variants) {
-    if (!variant) continue;
-    if (title === variant) score += 8;
-    else if (title.includes(variant)) score += 5;
-    if (snippet.includes(variant)) score += 3;
-  }
-
-  const hits = countTokenMatches(tokens, merged);
-  score += hits * 2;
-  if (tokens.length >= 2 && hits >= Math.min(2, tokens.length)) score += 2;
-  return score;
-};
-
-const WIKI_FALLBACK_TIMEOUT_MS = parseInt(process.env.WIKI_FALLBACK_TIMEOUT_MS || '4200', 10);
-
-const fetchWikipediaSummary = async (title: string): Promise<{ title: string; extract: string } | null> => {
-  const normalizedTitle = String(title || '').trim();
-  if (!normalizedTitle) return null;
-  const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(normalizedTitle)}`;
-  const summaryResp = await withTimeout(
-    fetch(summaryUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
-    WIKI_FALLBACK_TIMEOUT_MS,
-    'WIKI_SUMMARY_TIMEOUT'
-  );
-  if (!summaryResp.ok) return null;
-  const summaryData: any = await summaryResp.json().catch(() => ({}));
-  const extract = String(summaryData?.extract || '').replace(/\s+/g, ' ').trim();
-  const resolvedTitle = String(summaryData?.title || normalizedTitle).trim();
-  if (!extract || !resolvedTitle) return null;
-  return { title: resolvedTitle, extract };
-};
-
-const fetchWikipediaFallbackAnswer = async (userText: string): Promise<string | null> => {
-  const rawQuery = String(userText || '').trim();
-  if (!rawQuery || rawQuery.length < 3) return null;
-  const topic = extractKnowledgeTopic(rawQuery) || rawQuery.toLowerCase();
-
-  try {
-    // First try direct topic summary for highest precision.
-    const directCandidates = Array.from(new Set([topic, rawQuery.toLowerCase()])).filter(Boolean);
-    for (const candidate of directCandidates) {
-      const direct = await fetchWikipediaSummary(candidate);
-      if (!direct) continue;
-      if (isWikipediaResultRelevant(topic, direct.title, direct.extract)) {
-        return `${direct.title}: ${direct.extract}`;
-      }
-    }
-
-    const searchUrl =
-      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(topic)}&utf8=1&format=json&srlimit=5`;
-    const searchResp = await withTimeout(
-      fetch(searchUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
-      WIKI_FALLBACK_TIMEOUT_MS,
-      'WIKI_SEARCH_TIMEOUT'
-    );
-    if (!searchResp.ok) return null;
-    const searchData: any = await searchResp.json().catch(() => ({}));
-    const searchResults = Array.isArray(searchData?.query?.search) ? searchData.query.search : [];
-    const ranked = searchResults
-      .map((entry: any) => {
-        const title = String(entry?.title || '').trim();
-        const snippet = String(entry?.snippet || '').trim();
-        const score = scoreWikipediaCandidate(topic, { title, snippet });
-        return { title, score };
-      })
-      .filter((entry: { title: string; score: number }) => entry.title && entry.score > 0)
-      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
-      .slice(0, 3);
-
-    for (const candidate of ranked) {
-      const summary = await fetchWikipediaSummary(candidate.title);
-      if (!summary) continue;
-      if (!isWikipediaResultRelevant(topic, summary.title, summary.extract)) continue;
-      return `${summary.title}: ${summary.extract}`;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
-
-async function getAIResponse(userText: string): Promise<string> {
+async function getAIResponse(
+  userText: string,
+  history: BotChatTurn[] = [],
+  systemPrompt?: string,
+  aiRuntimeConfig?: AIRuntimeConfig
+): Promise<string> {
   const normalizedInput = normalizePromptForModel(userText);
-  const preferredProvider = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
-  const hasOpenAIKey = Boolean(String(process.env.OPENAI_API_KEY || '').trim());
-  const hasOpenRouterKey = Boolean(String(process.env.OPENROUTER_API_KEY || '').trim());
-  const hasAnthropicKey = Boolean(String(process.env.ANTHROPIC_API_KEY || '').trim());
-  const hasMoonshotKey = Boolean(String(process.env.MOONSHOT_API_KEY || '').trim());
-  const hasSarvamKey = Boolean(String(process.env.SARVAM_API_KEYS || process.env.SARVAM_API_KEY || '').trim());
-  const hasGeminiKey = String(process.env.GEMINI_API_KEY || '').trim().startsWith('AIza');
-
-  const providerCandidates = Array.from(new Set([
-    preferredProvider,
-    'openai',
-    'openrouter',
-    'anthropic',
-    'moonshot',
-    'sarvam',
-    'gemini'
-  ].filter(Boolean)));
-
-  const isProviderConfigured = (provider: string): boolean => {
-    if (provider === 'openai') return hasOpenAIKey;
-    if (provider === 'openrouter') return hasOpenRouterKey;
-    if (provider === 'anthropic') return hasAnthropicKey;
-    if (provider === 'moonshot') return hasMoonshotKey;
-    if (provider === 'sarvam') return hasSarvamKey;
-    if (provider === 'gemini') return hasGeminiKey;
-    return false;
-  };
-
-  for (const provider of providerCandidates) {
-    if (!isProviderConfigured(provider)) continue;
-    try {
-      const forced = await withTimeout(
-        generateBotResponse(normalizedInput || userText, undefined, [], undefined, { provider, forceProvider: true }),
-        AI_RESPONSE_TIMEOUT_MS,
-        `FORCED_${provider.toUpperCase()}_TIMEOUT`
-      );
-      const forcedText = String(forced || '').trim();
-      if (forcedText && !isLowValueDeflectionReply(forcedText) && !looksOffTopicForDefinitionPrompt(userText, forcedText)) {
-        return forcedText;
-      }
-    } catch {
-      // Try next configured provider.
-    }
-  }
-
-  if (!process.env.HUGGINGFACE_API_KEY) {
-    const webFallback = await fetchWikipediaFallbackAnswer(userText);
-    if (webFallback) return webFallback;
-    return generateEmergencyReply(userText);
-  }
-  // Always attempt fallback generation; the service already handles missing keys safely.
-  const response = await huggingFaceService.generateResponse(
-    normalizedInput || userText,
-    "You are the SimpleClaw AI assistant. You are a highly professional, accurate, and strategic AI agent. Your goal is to provide world-class technical and general assistance."
+  const response = await withTimeout(
+    generateBotResponse(normalizedInput || userText, undefined, history, systemPrompt, aiRuntimeConfig),
+    AI_RESPONSE_TIMEOUT_MS,
+    'MODEL_ONLY_FALLBACK_TIMEOUT'
   );
   const safeResponse = String(response || '').trim();
-  const offTopic = looksOffTopicForDefinitionPrompt(userText, safeResponse);
+  const offTopic = looksOffTopicForDefinitionPrompt(userText, safeResponse)
+    || looksOffTopicByPromptOverlap(userText, safeResponse);
   if (!safeResponse || isLowValueDeflectionReply(safeResponse) || offTopic) {
-    const webFallback = await fetchWikipediaFallbackAnswer(userText);
-    if (webFallback) return webFallback;
+    throw new Error('MODEL_ONLY_FALLBACK_REJECTED');
   }
-  if (!safeResponse || offTopic) return generateEmergencyReply(userText);
   return safeResponse;
 }
 
 const generateEmergencyReply = (messageText: string): string => {
   const text = String(messageText || '').trim();
-  const lower = text.toLowerCase();
-  if (!text) return 'Please send your question and I will help immediately.';
-  if (isGreetingPrompt(lower)) {
-    return `Hello. I am active and ready to help you with a full professional response.
-
-Share your exact question, objective, or problem statement, and I will provide a detailed answer with clear reasoning and practical steps.`;
-  }
-  if (/(how are you|how r u|how're you)/.test(lower)) {
-    return `I am fully available and ready to assist at a professional standard.
-
-Tell me your exact requirement, and I will provide a complete, structured, and actionable response.`;
-  }
-  if (/(bye|good ?night|good ?bye)/.test(lower)) {
-    return 'Goodbye. I will be here whenever you need help.';
-  }
-  if (/(ready to control my (life|mind)|control my (life|mind)|improve my life|discipline|focus|productivity)/.test(lower)) {
-    return `Great mindset. Use this execution framework:
-
-1. Set one clear target for the next 30 days.
-2. Remove top distractions and lock focused work windows.
-3. Execute daily with a fixed routine and review at night.
-4. Track progress every day and correct the weakest habit first.`;
-  }
-  if (/(help|support|issue|error|problem|bug|not working)/.test(lower)) {
-    return `I can help. Please share the exact error message, what you expected, and what happened instead.
-
-Once you provide that context, I will give you a detailed root-cause analysis and a precise fix path.`;
-  }
-  if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|algorithm|leetcode)/.test(lower)) {
-    return `Yes, I can help with coding at production quality.
-
-Send the exact problem statement, sample input/output (if any), and preferred language, and I will provide a correct solution with explanation, edge cases, and implementation notes.`;
-  }
-  if (/(population of india|india population)/.test(lower)) {
-    return 'India has an estimated population of about 1.43 billion people.';
-  }
-  if (/(population of china|china population)/.test(lower)) {
-    return 'China has an estimated population of about 1.41 billion people.';
-  }
-  if (/(population of (usa|united states)|usa population|united states population)/.test(lower)) {
-    return 'The United States has an estimated population of about 340 million people.';
-  }
-  if (/(population of world|world population|global population)/.test(lower)) {
-    return 'The world population is estimated at about 8.1 billion people.';
-  }
-  if (/(who won the gold medal in tennis|gold medal in tennis)/.test(lower)) {
-    return 'At the Paris 2024 Olympics tennis singles events, Novak Djokovic won men\'s gold and Zheng Qinwen won women\'s gold.';
-  }
-  if (/(who is sania mirza|sania mirza)/.test(lower)) {
-    return 'Sania Mirza is an Indian former professional tennis player and Grand Slam champion, known as one of India\'s most successful women in tennis.';
-  }
-  if (/(snape|severus)/.test(lower)) {
-    return 'Severus Snape is a key character in the Harry Potter series: a Hogwarts professor, former Death Eater, and ultimately a double agent who protected Harry.';
-  }
-  if (/(your real name|real name|official name)/.test(lower)) {
-    return 'My official name is set by your Telegram bot profile.';
-  }
-  return `Temporary AI processing issue detected.
-
-Please resend your question once. I will return a detailed, professional answer with the right depth and structure.`;
+  if (!text) return 'Please send your question so I can help.';
+  return 'I could not process that request right now. Please resend your question clearly in one line.';
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -1717,103 +1525,6 @@ const isExplicitBriefRequest = (text: string): boolean => {
 };
 
 const instantProfessionalReply = (text: string): string | null => {
-  const q = String(text || '').trim().toLowerCase();
-  if (!q) return null;
-  if (isGreetingPrompt(q) || /(how are you|how r u|how're you)/.test(q)) {
-    return `I am fully operational and ready to support you at a professional level.
-
-Whether you need technical guidance, strategic thinking, writing support, or step-by-step execution planning, I can provide detailed and structured answers with practical depth.
-
-If you share your exact question or objective, I will give a complete response with clear reasoning, actionable recommendations, and the best next steps.`;
-  }
-  if (/(can you do coding|do you know coding|can you code|are you good at coding)/.test(q)) {
-    return `Yes. I can support production-grade coding and engineering work across Python, JavaScript/TypeScript, Java, C++, SQL, APIs, debugging, architecture decisions, and optimization.
-
-I can provide:
-- Correct and runnable code
-- Root-cause debugging analysis
-- Refactoring for readability and maintainability
-- Performance and reliability improvements
-
-Share your exact problem statement and preferred language, and I will deliver a complete professional solution.`;
-  }
-  if (/who are you|what are you/.test(q)) {
-    return `I am your professional AI assistant configured for high-quality technical and strategic support.
-
-My role is to give accurate, mature, and implementation-ready answers rather than vague advice. I can help with coding, troubleshooting, decision frameworks, documentation, and execution planning.
-
-If you provide your context and goal, I will give a detailed response tailored to your use case.`;
-  }
-  if (/what can you do|your capabilities|how can you help/.test(q)) {
-    return `I provide end-to-end professional support across technical and operational work.
-
-Core capabilities:
-- Software engineering: coding, debugging, architecture, API design, optimization
-- Product and execution: planning, prioritization, process frameworks
-- Communication: polished drafts, structured explanations, and documentation
-- Decision support: comparisons, trade-off analysis, and recommended actions
-
-Send a specific task and I will produce a detailed, practical answer you can apply immediately.`;
-  }
-  if (/what is ai\b|define ai\b/.test(q)) {
-    return `Artificial Intelligence (AI) is a class of systems designed to perform tasks that typically require human cognitive ability, such as understanding language, finding patterns, reasoning, prediction, and decision support.
-
-At a practical level, modern AI models learn from large datasets and then generalize to new inputs. In real-world use, AI is most valuable when it improves speed, consistency, and quality of decision-making while humans define the objective, constraints, and governance.
-
-The best approach is to treat AI as a high-leverage assistant: it can accelerate output, but final direction and accountability remain with the user or team.`;
-  }
-  if (/(value of pi|what is pi\b|pi value)/.test(q)) {
-    return 'Pi is approximately 3.141592653589793 (commonly 3.14).';
-  }
-  if (/(longest prime|largest prime|biggest prime)/.test(q)) {
-    return 'There is no longest prime number. Primes are infinite.';
-  }
-  if (/(ready to control my (life|mind)|control my (life|mind)|fix my life|change my life|build discipline|improve my focus)/.test(q)) {
-    return `Yes. I can help you build strong control with a practical system.
-
-1. Define one 30-day target and one measurable daily action.
-2. Block top distractions and run two deep-work sessions (50/10).
-3. Follow a fixed routine: sleep, wake, work, and review at the same times.
-4. Track daily execution score and adjust weak points every night.
-
-Share your current routine, and I will give you a personalized plan.`;
-  }
-  if (/motivate me|motivation|i am lazy|procrastinating/.test(q)) {
-    return 'Do not wait for motivation. Use action first: pick one 20-minute task, start a timer, finish it, then continue one more cycle.';
-  }
-  if (/rat in a maze|maze problem/.test(q)) {
-    return `Yes. Here is a clean Python solution for "Rat in a Maze" using DFS and backtracking:
-
-\`\`\`python
-def rat_in_maze_paths(maze):
-    n = len(maze)
-    if n == 0 or maze[0][0] == 0 or maze[n - 1][n - 1] == 0:
-        return []
-
-    directions = [('D', 1, 0), ('L', 0, -1), ('R', 0, 1), ('U', -1, 0)]
-    visited = [[False] * n for _ in range(n)]
-    result = []
-
-    def dfs(r, c, path):
-        if r == n - 1 and c == n - 1:
-            result.append(path)
-            return
-        visited[r][c] = True
-        for ch, dr, dc in directions:
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < n and 0 <= nc < n and not visited[nr][nc] and maze[nr][nc] == 1:
-                dfs(nr, nc, path + ch)
-        visited[r][c] = False
-
-    dfs(0, 0, "")
-    return sorted(result)
-\`\`\`
-
-If you want, I can also give C++ or Java version.`;
-  }
-  if (/what should i do now|next step/.test(q)) {
-    return 'Immediate next step: define one priority, break it into 3 tasks, complete task 1 in the next 30 minutes.';
-  }
   return null;
 };
 
@@ -2863,7 +2574,7 @@ const selfVerifyAnswer = async (
   draftAnswer: string,
   history: BotChatTurn[],
   systemPrompt: string,
-  aiRuntimeConfig?: { provider?: string; model?: string }
+  aiRuntimeConfig?: AIRuntimeConfig
 ): Promise<string> => {
   const verifyPrompt = `Verify the following answer for factual consistency and correctness. If incorrect, return a corrected answer in the same professional structure.\n\nQuestion:\n${question}\n\nDraft Answer:\n${draftAnswer}\n\nReturn only the final corrected answer.`;
   const verified = await withTimeout(
@@ -2878,7 +2589,7 @@ const generateProfessionalReply = async (
   messageText: string,
   chatIdentity?: string | number,
   scope: string = 'telegram:primary',
-  aiRuntimeConfig?: { provider?: string; model?: string }
+  aiRuntimeConfig?: AIRuntimeConfig
 ): Promise<string> => {
   const trimmedInput = String(messageText || '').trim();
   if (!trimmedInput) {
@@ -2962,6 +2673,15 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
     appendChatHistory(conversationKey, effectiveInput, answer);
     return answer;
   }
+  if (/^(are you|r u|can you)\b/.test(normalizedPrompt) && /(advance|advanced|smart|intelligent|professional|expert|capable|real ai)/.test(normalizedPrompt)) {
+    const capabilityAnswer = finalizeProfessionalReply(
+      effectiveInput,
+      `Yes. I am an AI assistant built to provide accurate and professional answers.\n\nAsk your question directly, and I will answer only that question with clear and relevant details.`,
+      conversationKey
+    );
+    appendChatHistory(conversationKey, effectiveInput, capabilityAnswer);
+    return capabilityAnswer;
+  }
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
   const intent = detectIntent(effectiveInput);
   const realtimeSearchRequested = needsRealtimeSearch(effectiveInput);
@@ -3009,10 +2729,28 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
     const systemPrompt = buildSystemPrompt(intent, userProfile);
     const modelPrompt = normalizePromptForModel(effectiveInput);
     const isolateFromHistory = shouldIsolateFromHistory(effectiveInput);
+    const history = isolateFromHistory ? [] : getChatHistory(conversationKey);
+    const preferredProvider = String(aiRuntimeConfig?.provider || process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const resolvedProvider = resolveUsableProvider(preferredProvider);
+    const incomingModel = String(aiRuntimeConfig?.model || '').trim();
+    const resolvedModel = preferredProvider && resolvedProvider && preferredProvider !== resolvedProvider
+      ? ''
+      : incomingModel;
+    if (preferredProvider && resolvedProvider && preferredProvider !== resolvedProvider) {
+      console.warn('[AI_CONFIG] Preferred provider is not configured. Falling back.', JSON.stringify({
+        preferredProvider,
+        resolvedProvider
+      }));
+    }
+    const enforcedRuntimeConfig: AIRuntimeConfig = {
+      provider: resolvedProvider,
+      model: resolvedModel || undefined,
+      forceProvider: Boolean(resolvedProvider)
+    };
     const startedAt = Date.now();
     const resolveTopicSafeFallback = async (): Promise<string> => {
       const fallback = await withTimeout(
-        getAIResponse(effectiveInput),
+        getAIResponse(effectiveInput, history, systemPrompt, enforcedRuntimeConfig),
         AI_RESPONSE_TIMEOUT_MS,
         'Fallback AI response timeout'
       );
@@ -3033,15 +2771,16 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
       chatId: chatIdentity || null,
       scope,
       intent,
+      provider: enforcedRuntimeConfig.provider || 'auto',
+      model: enforcedRuntimeConfig.model || 'default',
       realtimeSearchTriggered: realtimeSearchRequested,
       question: effectiveInput.slice(0, 400),
       modelPrompt: modelPrompt.slice(0, 240),
       isolatedHistory: isolateFromHistory
     }));
     try {
-      const history = isolateFromHistory ? [] : getChatHistory(conversationKey);
       const response = await withTimeout(
-        generateBotResponse(modelPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
+        generateBotResponse(modelPrompt, undefined, history, systemPrompt, enforcedRuntimeConfig),
         AI_RESPONSE_TIMEOUT_MS,
         'AI response timeout'
       );
@@ -3057,7 +2796,7 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
         const strictRetryPrompt = `${modelPrompt}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
         const strictRetry = await withTimeout(
-          generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
+          generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt, enforcedRuntimeConfig),
           AI_RESPONSE_TIMEOUT_MS,
           'AI strict retry timeout'
         );
@@ -3075,7 +2814,7 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
       if (shouldRetry) {
         const retryPrompt = `${modelPrompt}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
         const retry = await withTimeout(
-          generateBotResponse(retryPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
+          generateBotResponse(retryPrompt, undefined, history, systemPrompt, enforcedRuntimeConfig),
           AI_RESPONSE_TIMEOUT_MS,
           'AI response timeout'
         );
@@ -3084,7 +2823,7 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(effectiveInput)) {
           retryClean = finalizeProfessionalReply(
             effectiveInput,
-            formatProfessionalResponse(await selfVerifyAnswer(effectiveInput, retryClean, history, systemPrompt, aiRuntimeConfig), effectiveInput),
+            formatProfessionalResponse(await selfVerifyAnswer(effectiveInput, retryClean, history, systemPrompt, enforcedRuntimeConfig), effectiveInput),
             conversationKey
           );
         }
@@ -3110,7 +2849,7 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
       if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(effectiveInput)) {
         clean = finalizeProfessionalReply(
           effectiveInput,
-          formatProfessionalResponse(await selfVerifyAnswer(effectiveInput, clean, history, systemPrompt, aiRuntimeConfig), effectiveInput),
+          formatProfessionalResponse(await selfVerifyAnswer(effectiveInput, clean, history, systemPrompt, enforcedRuntimeConfig), effectiveInput),
           conversationKey
         );
       }
@@ -5201,24 +4940,6 @@ app.post('/billing/confirm-credit-session', async (req, res) => {
     });
   } catch {
     return res.status(500).json({ success: false, message: 'Failed to confirm credit purchase.' });
-  }
-});
-
-// Test endpoint for Hugging Face
-app.get('/api/test-hf', requireAdminAccess, async (req, res) => {
-  try {
-    const testResponse = await huggingFaceService.generateResponse("Hello, how are you?");
-    res.json({ 
-      success: true, 
-      message: "Hugging Face API is working!",
-      response: testResponse
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: "Hugging Face API test failed",
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
   }
 });
 
