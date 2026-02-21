@@ -228,7 +228,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setIsDeploying(false);
     setDeployStep('input');
 
-    if (hadTelegramBot) {
+    if (hadTelegramBot && !forceTokenEntry) {
       setFlowStep('success');
       const params = new URLSearchParams();
       params.set('stage', 'success');
@@ -495,7 +495,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             onClick={confirmFirstMessage}
             className="w-full btn-deploy-gradient text-white py-5 rounded-2xl font-black text-base transition-all uppercase"
           >
-            I have sent a message
+            Ready to Connect
           </button>
         </div>
       );
