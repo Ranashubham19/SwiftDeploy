@@ -143,7 +143,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          botToken: token.trim()
+          botToken: token.trim(),
+          model: String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH
         })
       });
 
@@ -161,8 +162,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
       const botId = String(result.botId || '').trim() || Math.random().toString(36).slice(2, 11);
       const botUsername = String(result.botUsername || '').trim();
+      const botNameFromTelegram = String(result.botName || '').trim();
       const telegramLink = String(result.telegramLink || '').trim() || (botUsername ? `https://t.me/${botUsername}` : '');
-      const botName = botUsername ? `@${botUsername}` : `TelegramBot-${bots.length + 1}`;
+      const botName = botNameFromTelegram || (botUsername ? `@${botUsername}` : `TelegramBot-${bots.length + 1}`);
       const newBot: Bot = {
         id: botId,
         name: botName,

@@ -8,6 +8,7 @@ enum AIModel {
 type ChatHistory = { role: 'user' | 'model', parts: { text: string }[] }[];
 type RetrievalDoc = { title: string; snippet: string; url?: string; source: string };
 type IntentType = 'math' | 'current_event' | 'coding' | 'general';
+export type AIRuntimeConfig = { provider?: string; model?: string; forceProvider?: boolean };
 
 const MAX_HISTORY_TURNS = parseInt(process.env.HISTORY_MAX_TURNS || '120', 10);
 const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'true').trim().toLowerCase() !== 'false';
@@ -382,13 +383,13 @@ const getOpenRouterCandidateModels = (prompt: string): string[] => {
   return Array.from(new Set([baseModel, ...intentModels, ...poolModels].filter(Boolean)));
 };
 
-const callOpenAI = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
+const callOpenAI = async (prompt: string, history: ChatHistory, systemInstruction?: string, modelOverride?: string): Promise<string> => {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY_MISSING');
   }
 
-  const model = (process.env.OPENAI_MODEL || 'gpt-5.2').trim();
+  const model = (modelOverride || process.env.OPENAI_MODEL || 'gpt-5.2').trim();
   const historyText = extractHistoryText(history);
   const body = {
     model,
@@ -424,13 +425,13 @@ const callOpenAI = async (prompt: string, history: ChatHistory, systemInstructio
   return text.trim();
 };
 
-const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
+const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruction?: string, modelOverride?: string): Promise<string> => {
   const apiKey = (process.env.MOONSHOT_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error('MOONSHOT_KEY_MISSING');
   }
 
-  const model = (process.env.MOONSHOT_MODEL || 'kimi-k2-0905-preview').trim();
+  const model = (modelOverride || process.env.MOONSHOT_MODEL || 'kimi-k2-0905-preview').trim();
   const historyText = extractHistoryText(history);
   const baseUrl = (process.env.MOONSHOT_BASE_URL || 'https://api.moonshot.ai/v1/chat/completions').trim();
   const moonshotMaxTokens = Math.max(64, parseInt(process.env.MOONSHOT_MAX_TOKENS || '512', 10) || 512);
@@ -478,13 +479,13 @@ const callMoonshot = async (prompt: string, history: ChatHistory, systemInstruct
   return text.trim();
 };
 
-const callAnthropic = async (prompt: string, history: ChatHistory, systemInstruction?: string): Promise<string> => {
+const callAnthropic = async (prompt: string, history: ChatHistory, systemInstruction?: string, modelOverride?: string): Promise<string> => {
   const apiKey = (process.env.ANTHROPIC_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY_MISSING');
   }
 
-  const model = (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim();
+  const model = (modelOverride || process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim();
   const historyText = extractHistoryText(history);
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -651,7 +652,8 @@ export const generateBotResponse = async (
   prompt: string, 
   model: AIModel = AIModel.GEMINI_3_FLASH, 
   history: ChatHistory = [],
-  systemInstruction?: string
+  systemInstruction?: string,
+  runtimeConfig?: AIRuntimeConfig
 ): Promise<string> => {
   try {
     const sanitizedPrompt = prompt.trim();
@@ -669,12 +671,14 @@ export const generateBotResponse = async (
     const hasMoonshot = Boolean((process.env.MOONSHOT_API_KEY || '').trim());
     const hasOpenAI = Boolean((process.env.OPENAI_API_KEY || '').trim());
     const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
-    const explicitProvider = (process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const explicitProvider = (runtimeConfig?.provider || process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const runtimeModel = (runtimeConfig?.model || '').trim();
+    const forceProvider = Boolean(runtimeConfig?.forceProvider ?? runtimeConfig?.provider);
     const preferOpenAI = CHATGPT_52_MODE && hasOpenAI;
     const preferredProvider =
       explicitProvider
       || (preferOpenAI ? 'openai' : hasMoonshot ? 'moonshot' : hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
-    const providers = getProviderOrder(preferredProvider, sanitizedPrompt);
+    const providers = forceProvider ? [preferredProvider || 'gemini'] : getProviderOrder(preferredProvider, sanitizedPrompt);
 
     let lastError: Error | null = null;
     for (const provider of providers) {
@@ -686,13 +690,13 @@ export const generateBotResponse = async (
           return await callOpenRouter(groundedPrompt, compactHistory, adaptiveInstruction);
         }
         if (provider === 'moonshot') {
-          return await callMoonshot(groundedPrompt, compactHistory, adaptiveInstruction);
+          return await callMoonshot(groundedPrompt, compactHistory, adaptiveInstruction, runtimeModel || undefined);
         }
         if (provider === 'openai') {
-          return await callOpenAI(groundedPrompt, compactHistory, adaptiveInstruction);
+          return await callOpenAI(groundedPrompt, compactHistory, adaptiveInstruction, runtimeModel || undefined);
         }
         if (provider === 'anthropic') {
-          return await callAnthropic(groundedPrompt, compactHistory, adaptiveInstruction);
+          return await callAnthropic(groundedPrompt, compactHistory, adaptiveInstruction, runtimeModel || undefined);
         }
 
         const geminiKey = getGeminiApiKey();
@@ -701,7 +705,11 @@ export const generateBotResponse = async (
         }
         const ai = new GoogleGenAI({ apiKey: geminiKey });
         let geminiError: Error | null = null;
-        for (const modelName of getPreferredGeminiModels(model)) {
+        const geminiOverride = runtimeModel
+          ? (/flash/i.test(runtimeModel) ? 'gemini-2.5-flash' : /pro/i.test(runtimeModel) ? 'gemini-2.5-pro' : runtimeModel)
+          : '';
+        const geminiCandidates = Array.from(new Set([geminiOverride, ...getPreferredGeminiModels(model)].filter(Boolean)));
+        for (const modelName of geminiCandidates) {
           try {
             const response: GenerateContentResponse = await ai.models.generateContent({
               model: modelName,

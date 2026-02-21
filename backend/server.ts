@@ -92,6 +92,8 @@ const managedBotListeners = new Set<string>();
 const telegramBotOwners = new Map<string, string>();
 const telegramBotUsernames = new Map<string, string>();
 const telegramBotNames = new Map<string, string>();
+const telegramBotAiProviders = new Map<string, string>();
+const telegramBotAiModels = new Map<string, string>();
 type BotCreditState = {
   remainingUsd: number;
   lastChargedAt: number;
@@ -112,6 +114,8 @@ type TelegramBotConfig = {
   ownerEmail: string;
   botUsername?: string;
   botName?: string;
+  aiProvider?: string;
+  aiModel?: string;
   creditRemainingUsd?: number;
   creditLastChargedAt?: number;
   creditDepleted?: boolean;
@@ -383,6 +387,8 @@ const persistBotState = (): void => {
       ownerEmail: telegramBotOwners.get(botId) || '',
       botUsername: telegramBotUsernames.get(botId) || undefined,
       botName: telegramBotNames.get(botId) || undefined,
+      aiProvider: telegramBotAiProviders.get(botId) || undefined,
+      aiModel: telegramBotAiModels.get(botId) || undefined,
       creditRemainingUsd: credit.remainingUsd,
       creditLastChargedAt: credit.lastChargedAt,
       creditDepleted: credit.depleted,
@@ -638,6 +644,35 @@ const getActiveAiConfig = (): { provider: string; model: string } => {
               ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
               : (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
   return { provider, model };
+};
+
+const TELEGRAM_DEFAULT_MODEL_SELECTION = (process.env.TELEGRAM_DEFAULT_MODEL_SELECTION || 'gpt-5-2').trim().toLowerCase();
+
+const mapTelegramModelChoice = (choiceRaw: string): { provider: string; model: string } | null => {
+  const choice = String(choiceRaw || '').trim().toLowerCase();
+  if (choice === 'gpt-5-2' || choice === 'gpt-5.2') {
+    return { provider: 'openai', model: 'gpt-5.2' };
+  }
+  if (choice === 'claude-opus-4-5' || choice === 'claude-4.5' || choice === 'claude_opus_4_5') {
+    return { provider: 'anthropic', model: 'claude-opus-4-5' };
+  }
+  if (
+    choice === 'gemini-3-flash' ||
+    choice === 'gemini-3-flash-preview' ||
+    choice === 'gemini-3-pro-preview' ||
+    choice === 'gemini3flash'
+  ) {
+    return { provider: 'gemini', model: 'gemini-3-flash' };
+  }
+  return null;
+};
+
+const resolveTelegramAiConfig = (selectedModelRaw: string): { provider: string; model: string } => {
+  const fromSelection = mapTelegramModelChoice(selectedModelRaw);
+  if (fromSelection) return fromSelection;
+  const fromDefault = mapTelegramModelChoice(TELEGRAM_DEFAULT_MODEL_SELECTION);
+  if (fromDefault) return fromDefault;
+  return { provider: 'openai', model: 'gpt-5.2' };
 };
 
 // Middleware configuration
@@ -982,6 +1017,8 @@ const restorePersistedBots = async (): Promise<void> => {
     botTokens.set(botId, botToken);
     if (tg.botUsername) telegramBotUsernames.set(botId, String(tg.botUsername).trim());
     if (tg.botName) telegramBotNames.set(botId, String(tg.botName).trim());
+    if (tg.aiProvider) telegramBotAiProviders.set(botId, String(tg.aiProvider).trim().toLowerCase());
+    if (tg.aiModel) telegramBotAiModels.set(botId, String(tg.aiModel).trim());
     botCredits.set(botId, {
       remainingUsd: Math.max(0, Number(tg.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
       lastChargedAt: Math.max(0, Number(tg.creditLastChargedAt ?? Date.now())),
@@ -1552,18 +1589,18 @@ const sanitizeAssistantName = (input: string): string => {
 
 const getAssistantName = (conversationKey?: string): string => {
   if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
-  const profile = userProfiles.get(conversationKey);
-  const named = sanitizeAssistantName(profile?.assistantName || '');
-  if (named) return named;
-
   const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
   const telegramBotId = String(tgMatch?.[1] || '').trim();
   if (telegramBotId) {
+    // Telegram identity is controlled by BotFather metadata only.
     const botName = sanitizeAssistantName(telegramBotNames.get(telegramBotId) || '');
     if (botName) return botName;
     const botUsername = sanitizeAssistantName(telegramBotUsernames.get(telegramBotId) || '');
     if (botUsername) return botUsername;
   }
+  const profile = userProfiles.get(conversationKey);
+  const named = sanitizeAssistantName(profile?.assistantName || '');
+  if (named) return named;
   return DEFAULT_ASSISTANT_NAME;
 };
 
@@ -1905,11 +1942,12 @@ const selfVerifyAnswer = async (
   question: string,
   draftAnswer: string,
   history: BotChatTurn[],
-  systemPrompt: string
+  systemPrompt: string,
+  aiRuntimeConfig?: { provider?: string; model?: string }
 ): Promise<string> => {
   const verifyPrompt = `Verify the following answer for factual consistency and correctness. If incorrect, return a corrected answer in the same professional structure.\n\nQuestion:\n${question}\n\nDraft Answer:\n${draftAnswer}\n\nReturn only the final corrected answer.`;
   const verified = await withTimeout(
-    generateBotResponse(verifyPrompt, undefined, history, systemPrompt),
+    generateBotResponse(verifyPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
     AI_RESPONSE_TIMEOUT_MS,
     'AI verification timeout'
   );
@@ -1919,7 +1957,8 @@ const selfVerifyAnswer = async (
 const generateProfessionalReply = async (
   messageText: string,
   chatIdentity?: string | number,
-  scope: string = 'telegram:primary'
+  scope: string = 'telegram:primary',
+  aiRuntimeConfig?: { provider?: string; model?: string }
 ): Promise<string> => {
   const trimmedInput = String(messageText || '').trim();
   if (!trimmedInput) {
@@ -1933,7 +1972,8 @@ const generateProfessionalReply = async (
   if (commandReply) {
     return commandReply;
   }
-  const renameTo = extractAssistantRenameCommand(trimmedInput);
+  const isTelegramConversation = Boolean(conversationKey && /^telegram:/i.test(conversationKey));
+  const renameTo = isTelegramConversation ? null : extractAssistantRenameCommand(trimmedInput);
   if (renameTo) {
     const appliedName = setAssistantNamePreference(conversationKey, renameTo);
     const confirm = `✅ Done. My name in this chat is now ${appliedName}.`;
@@ -2002,7 +2042,7 @@ const generateProfessionalReply = async (
     try {
       const history = getChatHistory(conversationKey);
       const response = await withTimeout(
-        generateBotResponse(trimmedInput, undefined, history, systemPrompt),
+        generateBotResponse(trimmedInput, undefined, history, systemPrompt, aiRuntimeConfig),
         AI_RESPONSE_TIMEOUT_MS,
         'AI response timeout'
       );
@@ -2021,7 +2061,7 @@ const generateProfessionalReply = async (
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
         const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
         const strictRetry = await withTimeout(
-          generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt),
+          generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
           AI_RESPONSE_TIMEOUT_MS,
           'AI strict retry timeout'
         );
@@ -2038,7 +2078,7 @@ const generateProfessionalReply = async (
       if (shouldRetry) {
         const retryPrompt = `${trimmedInput}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
         const retry = await withTimeout(
-          generateBotResponse(retryPrompt, undefined, history, systemPrompt),
+          generateBotResponse(retryPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
           AI_RESPONSE_TIMEOUT_MS,
           'AI response timeout'
         );
@@ -2051,7 +2091,7 @@ const generateProfessionalReply = async (
         retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
           retryClean = ensureEmojiInReply(
-            formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt), trimmedInput),
+            formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
             trimmedInput
           );
           retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
@@ -2075,7 +2115,7 @@ const generateProfessionalReply = async (
       }
       if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
         clean = ensureEmojiInReply(
-          formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt), trimmedInput),
+          formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
           trimmedInput
         );
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
@@ -2230,27 +2270,25 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
   const botScope = `telegram:${botId || botToken.slice(0, 12)}`;
   const conversationKey = buildConversationKey(botScope, chatId) || undefined;
+  let selectedProvider = String(botId ? (telegramBotAiProviders.get(botId) || '') : '').trim().toLowerCase();
+  let selectedModel = String(botId ? (telegramBotAiModels.get(botId) || '') : '').trim();
+  if (botId && (!selectedProvider || !selectedModel)) {
+    const strictDefault = resolveTelegramAiConfig('');
+    selectedProvider = strictDefault.provider;
+    selectedModel = strictDefault.model;
+    telegramBotAiProviders.set(botId, selectedProvider);
+    telegramBotAiModels.set(botId, selectedModel);
+    persistBotState();
+  }
+  if (!selectedProvider || !selectedModel) {
+    const strictDefault = resolveTelegramAiConfig('');
+    selectedProvider = strictDefault.provider;
+    selectedModel = strictDefault.model;
+  }
 
   if (/^\/start(?:@\w+)?$/i.test(text)) {
-    const mode = (process.env.BOT_MODE || 'premium').trim().toLowerCase();
-    const provider = (process.env.AI_PROVIDER || 'gemini').trim().toLowerCase();
-    const activeModel =
-      provider === 'gemini'
-        ? (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
-        : provider === 'moonshot'
-          ? (process.env.MOONSHOT_MODEL || 'kimi-k2.5').trim()
-          : provider === 'openai'
-            ? (process.env.OPENAI_MODEL || 'gpt-5.2').trim()
-            : provider === 'anthropic'
-              ? (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim()
-              : provider === 'openrouter'
-                ? (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim()
-                : provider === 'sarvam'
-                  ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
-                  : 'auto';
-    const assistantName = getAssistantName(conversationKey);
-    const welcome = `*${assistantName} Bot Active.*\n\nAI Provider: ${provider}\nAI Model: ${activeModel}\nMode: ${mode === 'premium' ? 'Premium Assistant' : 'Standard'}\nStatus: Operational\n\nSend a message to start chatting with AI.`;
-    await botInstance.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
+    const welcome = `AI Provider: ${selectedProvider}\nAI Model: ${selectedModel}\n\nSend a message to start chatting with AI.`;
+    await botInstance.sendMessage(chatId, welcome);
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
   }
@@ -2268,7 +2306,10 @@ const handleBotMessage = async (botToken: string, msg: any) => {
     const aiReply = await sendTelegramStreamingReply(
       botInstance,
       chatId,
-      generateProfessionalReply(text, chatId, botScope),
+      generateProfessionalReply(text, chatId, botScope, {
+        provider: selectedProvider,
+        model: selectedModel
+      }),
       msg.message_id
     );
     const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
@@ -2318,6 +2359,8 @@ app.post('/webhook/:botId', (req, res) => {
       botTokens.set(match.botId, match.botToken);
       if (match.botUsername) telegramBotUsernames.set(match.botId, String(match.botUsername).trim());
       if (match.botName) telegramBotNames.set(match.botId, String(match.botName).trim());
+      if (match.aiProvider) telegramBotAiProviders.set(match.botId, String(match.aiProvider).trim().toLowerCase());
+      if (match.aiModel) telegramBotAiModels.set(match.botId, String(match.aiModel).trim());
       botCredits.set(match.botId, {
         remainingUsd: Math.max(0, Number(match.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
         lastChargedAt: Math.max(0, Number(match.creditLastChargedAt ?? Date.now())),
@@ -2432,6 +2475,7 @@ app.get('/get-webhook-info', requireAdminAccess, async (req, res) => {
 app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
   const botToken = typeof req.body?.botToken === 'string' ? req.body.botToken.trim() : '';
   const requestedBotId = typeof req.body?.botId === 'string' ? req.body.botId.trim() : '';
+  const selectedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
   const reqUser = req.user as Express.User | undefined;
   const userEmail = (reqUser?.email || '').trim().toLowerCase();
   
@@ -2490,13 +2534,15 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
         details: 'Create bot via @BotFather first, then use its token here.'
       });
     }
-    const aiConfig = getActiveAiConfig();
+    const aiConfig = resolveTelegramAiConfig(selectedModel);
 
     // Store the bot token
     botTokens.set(botId, botToken);
     telegramBotOwners.set(botId, userEmail);
     if (botUsername) telegramBotUsernames.set(botId, botUsername);
     if (botName) telegramBotNames.set(botId, botName);
+    telegramBotAiProviders.set(botId, aiConfig.provider);
+    telegramBotAiModels.set(botId, aiConfig.model);
     botCredits.set(botId, {
       remainingUsd: INITIAL_BOT_CREDIT_USD,
       lastChargedAt: Date.now(),
@@ -2553,6 +2599,8 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
       telegramBotOwners.delete(botId);
       telegramBotUsernames.delete(botId);
       telegramBotNames.delete(botId);
+      telegramBotAiProviders.delete(botId);
+      telegramBotAiModels.delete(botId);
       botCredits.delete(botId);
       persistBotState();
       console.error(`[DEPLOY] Failed to deploy bot ${botId}:`, webhookResult.error);
