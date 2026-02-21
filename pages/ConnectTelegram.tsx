@@ -389,6 +389,19 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   };
 
   const confirmFirstMessage = async () => {
+    setDeployError('');
+    setIsDeploying(true);
+    setDeployStep('verifying');
+    await new Promise((r) => setTimeout(r, 800));
+
+    setDeployStep('provisioning');
+    await new Promise((r) => setTimeout(r, 900));
+
+    setDeployStep('webhooking');
+    await new Promise((r) => setTimeout(r, 900));
+
+    setIsDeploying(false);
+    setDeployStep('input');
     setFlowStep('success');
     const params = new URLSearchParams();
     params.set('stage', 'success');
@@ -493,6 +506,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           ) : null}
           <button
             onClick={confirmFirstMessage}
+            disabled={isDeploying}
             className="w-full btn-deploy-gradient text-white py-5 rounded-2xl font-black text-base transition-all uppercase"
           >
             Ready to Connect
