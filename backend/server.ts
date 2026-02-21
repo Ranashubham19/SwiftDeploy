@@ -158,7 +158,7 @@ const CHAT_HISTORY_MAX_TURNS = parseInt(process.env.CHAT_HISTORY_MAX_TURNS || '1
 const CHAT_HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = parseInt(process.env.AI_CACHE_MAX_ENTRIES || '800', 10);
-const RESPONSE_STYLE_VERSION = 'pro_layout_v3';
+const RESPONSE_STYLE_VERSION = 'pro_layout_v4_context_guard';
 const MAX_USER_PROMPT_LENGTH = parseInt(process.env.MAX_USER_PROMPT_LENGTH || '6000', 10);
 const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -587,6 +587,7 @@ const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
 
 const app = express();
 const startedAtIso = new Date().toISOString();
+const BOT_LOGIC_VERSION = 'context_guard_v3_2026-02-22';
 if (isProduction) {
   app.set('trust proxy', 1);
 }
@@ -598,7 +599,8 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
     startedAt: startedAtIso,
     uptime: process.uptime(),
-    message: 'Application is running'
+    message: 'Application is running',
+    botLogicVersion: BOT_LOGIC_VERSION
   });
 });
 
@@ -935,12 +937,232 @@ declare global {
  * Get AI response using Hugging Face API
  * Compliant with Hugging Face requirements
  */
+type WikiSearchCandidate = {
+  title: string;
+  snippet: string;
+};
+
+const WIKI_FALLBACK_STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'being', 'been',
+  'what', 'who', 'where', 'when', 'why', 'how', 'which',
+  'please', 'tell', 'me', 'about', 'define', 'explain', 'meaning',
+  'ok', 'okay', 'hi', 'hello', 'hey', 'yo', 'can', 'could', 'would', 'will',
+  'you', 'your', 'my', 'our', 'their', 'this', 'that', 'these', 'those',
+  'to', 'of', 'for', 'in', 'on', 'at', 'from', 'and', 'or'
+]);
+
+const tokenizeKnowledgeText = (text: string): string[] => {
+  return String(text || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2 && !WIKI_FALLBACK_STOP_WORDS.has(x));
+};
+
+const expandTopicVariants = (topic: string): string[] => {
+  const normalized = String(topic || '').toLowerCase().trim();
+  if (!normalized) return [];
+  const variants = [normalized];
+  if (normalized === 'usa' || normalized === 'u.s.a' || normalized === 'us' || normalized === 'u.s') {
+    variants.push('united states', 'united states of america');
+  }
+  if (normalized === 'uk' || normalized === 'u.k') {
+    variants.push('united kingdom');
+  }
+  if (normalized === 'uae') {
+    variants.push('united arab emirates');
+  }
+  if (normalized === 'nasa') {
+    variants.push('national aeronautics and space administration');
+  }
+  return Array.from(new Set(variants.filter(Boolean)));
+};
+
+const countTokenMatches = (tokens: string[], haystack: string): number => {
+  if (!tokens.length) return 0;
+  const text = String(haystack || '').toLowerCase();
+  let hits = 0;
+  for (const token of tokens) {
+    if (token && text.includes(token)) hits += 1;
+  }
+  return hits;
+};
+
+const extractKnowledgeTopic = (rawText: string): string => {
+  let value = String(rawText || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!value) return '';
+
+  value = value
+    .replace(/^[,.;:!?'"`~\-()\[\]{}]+/g, '')
+    .replace(/[?!.]+$/g, '')
+    .trim();
+
+  const leadPatterns = [
+    /^(ok(?:ay)?|hey|hello|hi|hii|yo|please|pls|bro|sir|assistant|bot)\b[\s,.:;!?-]*/i,
+    /^(can you|could you|would you|will you|kindly|tell me|explain|define|describe|help me understand|i want to know|do you know)\b[\s,.:;!?-]*/i,
+    /^(what(?:'s| is)|who(?:'s| is)|where(?:'s| is)|when(?:'s| is)|why(?:'s| is)|how(?:'s| is)|what are|who are|where are|meaning of|definition of|tell me about)\b[\s,.:;!?-]*/i
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of leadPatterns) {
+      const next = value.replace(pattern, '').trim();
+      if (next !== value) {
+        value = next;
+        changed = true;
+      }
+    }
+  }
+
+  value = value.replace(/[?!.]+$/g, '').trim();
+  // Normalize accidental article-led noun phrases: "a magic" -> "magic".
+  value = value.replace(/^(a|an|the)\s+/i, '').trim();
+  return value.slice(0, 120);
+};
+
+const isDefinitionLikePrompt = (prompt: string): boolean => {
+  const q = String(prompt || '').toLowerCase().trim();
+  return /(what(?:'s| is)|who(?:'s| is)|define|definition of|meaning of|tell me about|explain)\b/.test(q);
+};
+
+const looksOffTopicForDefinitionPrompt = (prompt: string, response: string): boolean => {
+  if (!isDefinitionLikePrompt(prompt)) return false;
+  const topic = extractKnowledgeTopic(prompt);
+  if (!topic) return false;
+  const variants = expandTopicVariants(topic).map((v) => String(v || '').trim()).filter(Boolean);
+  const tokens = Array.from(new Set(variants.flatMap(tokenizeKnowledgeText)));
+  if (!tokens.length && !variants.length) return false;
+  const normalizedResponse = String(response || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const hasDirectVariantMention = variants.some((variant) => {
+    const normalizedVariant = String(variant || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalizedVariant.length >= 2 && normalizedResponse.includes(normalizedVariant);
+  });
+  const firstSentence = String(response || '')
+    .split(/[.!?\n]/)[0]
+    ?.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || '';
+  const hasVariantInOpening = variants.some((variant) => {
+    const normalizedVariant = String(variant || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalizedVariant.length >= 2 && firstSentence.includes(normalizedVariant);
+  });
+  const normalizedTopic = String(topic || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const firstLine = String(response || '').split('\n')[0] || '';
+  const titlePrefix = firstLine.split(':')[0] || '';
+  const normalizedTitlePrefix = String(titlePrefix || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (
+    normalizedTopic
+    && isLikelyGenericConceptTopic(normalizedTopic)
+    && normalizedTitlePrefix
+    && normalizedTitlePrefix.includes(normalizedTopic)
+    && normalizedTitlePrefix !== normalizedTopic
+    && !normalizedTitlePrefix.startsWith(`${normalizedTopic} `)
+    && !normalizedTitlePrefix.startsWith(`${normalizedTopic} (`)
+  ) {
+    return true;
+  }
+  if (hasDirectVariantMention && hasVariantInOpening) return false;
+  const hits = countTokenMatches(tokens, normalizedResponse);
+  const requiredHits = tokens.length <= 2 ? 1 : 2;
+  if (!hasDirectVariantMention && hits < requiredHits) return true;
+  // For short definition prompts, force topic mention in opening line to prevent title drift.
+  if (isSimplePrompt(prompt) && !hasVariantInOpening && hits < Math.max(2, requiredHits)) return true;
+  return false;
+};
+
+const isWikipediaResultRelevant = (topic: string, title: string, summary: string): boolean => {
+  const normalizedTopic = String(topic || '').toLowerCase().trim();
+  if (!normalizedTopic) return false;
+  const merged = `${title} ${summary}`.toLowerCase();
+  const variants = expandTopicVariants(normalizedTopic);
+  if (variants.some((variant) => variant && merged.includes(variant))) return true;
+  const tokens = Array.from(new Set(variants.flatMap(tokenizeKnowledgeText)));
+  const hits = countTokenMatches(tokens, merged);
+  if (tokens.length <= 1) return hits >= 1;
+  return hits >= Math.min(2, tokens.length);
+};
+
+const scoreWikipediaCandidate = (topic: string, candidate: WikiSearchCandidate): number => {
+  const variants = expandTopicVariants(topic);
+  const tokens = Array.from(new Set(variants.flatMap(tokenizeKnowledgeText)));
+  const title = String(candidate.title || '').toLowerCase();
+  const snippet = String(candidate.snippet || '').replace(/<[^>]+>/g, ' ').toLowerCase();
+  const merged = `${title} ${snippet}`;
+  let score = 0;
+
+  for (const variant of variants) {
+    if (!variant) continue;
+    if (title === variant) score += 8;
+    else if (title.includes(variant)) score += 5;
+    if (snippet.includes(variant)) score += 3;
+  }
+
+  const hits = countTokenMatches(tokens, merged);
+  score += hits * 2;
+  if (tokens.length >= 2 && hits >= Math.min(2, tokens.length)) score += 2;
+  return score;
+};
+
+const fetchWikipediaSummary = async (title: string): Promise<{ title: string; extract: string } | null> => {
+  const normalizedTitle = String(title || '').trim();
+  if (!normalizedTitle) return null;
+  const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(normalizedTitle)}`;
+  const summaryResp = await withTimeout(
+    fetch(summaryUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
+    2800,
+    'WIKI_SUMMARY_TIMEOUT'
+  );
+  if (!summaryResp.ok) return null;
+  const summaryData: any = await summaryResp.json().catch(() => ({}));
+  const extract = String(summaryData?.extract || '').replace(/\s+/g, ' ').trim();
+  const resolvedTitle = String(summaryData?.title || normalizedTitle).trim();
+  if (!extract || !resolvedTitle) return null;
+  return { title: resolvedTitle, extract };
+};
+
 const fetchWikipediaFallbackAnswer = async (userText: string): Promise<string | null> => {
-  const query = String(userText || '').trim();
-  if (!query || query.length < 3) return null;
+  const rawQuery = String(userText || '').trim();
+  if (!rawQuery || rawQuery.length < 3) return null;
+  const topic = extractKnowledgeTopic(rawQuery) || rawQuery.toLowerCase();
+
   try {
+    // First try direct topic summary for highest precision.
+    const directCandidates = Array.from(new Set([topic, rawQuery.toLowerCase()])).filter(Boolean);
+    for (const candidate of directCandidates) {
+      const direct = await fetchWikipediaSummary(candidate);
+      if (!direct) continue;
+      if (isWikipediaResultRelevant(topic, direct.title, direct.extract)) {
+        return `${direct.title}: ${direct.extract}`;
+      }
+    }
+
     const searchUrl =
-      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=1&format=json&srlimit=1`;
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(topic)}&utf8=1&format=json&srlimit=5`;
     const searchResp = await withTimeout(
       fetch(searchUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
       2800,
@@ -948,27 +1170,51 @@ const fetchWikipediaFallbackAnswer = async (userText: string): Promise<string | 
     );
     if (!searchResp.ok) return null;
     const searchData: any = await searchResp.json().catch(() => ({}));
-    const first = Array.isArray(searchData?.query?.search) ? searchData.query.search[0] : null;
-    const title = String(first?.title || '').trim();
-    if (!title) return null;
+    const searchResults = Array.isArray(searchData?.query?.search) ? searchData.query.search : [];
+    const ranked = searchResults
+      .map((entry: any) => {
+        const title = String(entry?.title || '').trim();
+        const snippet = String(entry?.snippet || '').trim();
+        const score = scoreWikipediaCandidate(topic, { title, snippet });
+        return { title, score };
+      })
+      .filter((entry: { title: string; score: number }) => entry.title && entry.score > 0)
+      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
+      .slice(0, 3);
 
-    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
-    const summaryResp = await withTimeout(
-      fetch(summaryUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
-      2800,
-      'WIKI_SUMMARY_TIMEOUT'
-    );
-    if (!summaryResp.ok) return null;
-    const summaryData: any = await summaryResp.json().catch(() => ({}));
-    const extract = String(summaryData?.extract || '').replace(/\s+/g, ' ').trim();
-    if (!extract) return null;
-    return `${title}: ${extract}`;
+    for (const candidate of ranked) {
+      const summary = await fetchWikipediaSummary(candidate.title);
+      if (!summary) continue;
+      if (!isWikipediaResultRelevant(topic, summary.title, summary.extract)) continue;
+      return `${summary.title}: ${summary.extract}`;
+    }
+    return null;
   } catch {
     return null;
   }
 };
 
 async function getAIResponse(userText: string): Promise<string> {
+  const normalizedInput = normalizePromptForModel(userText);
+  const hasGeminiKey = String(process.env.GEMINI_API_KEY || '').trim().startsWith('AIza');
+
+  // Provider-level recovery: if the main router failed, force a clean Gemini pass once.
+  if (hasGeminiKey) {
+    try {
+      const forcedGemini = await withTimeout(
+        generateBotResponse(normalizedInput || userText, undefined, [], undefined, { provider: 'gemini', forceProvider: true }),
+        AI_RESPONSE_TIMEOUT_MS,
+        'FORCED_GEMINI_TIMEOUT'
+      );
+      const forcedText = String(forcedGemini || '').trim();
+      if (forcedText && !isLowValueDeflectionReply(forcedText) && !looksOffTopicForDefinitionPrompt(userText, forcedText)) {
+        return forcedText;
+      }
+    } catch {
+      // Continue with secondary fallbacks.
+    }
+  }
+
   if (!process.env.HUGGINGFACE_API_KEY) {
     const webFallback = await fetchWikipediaFallbackAnswer(userText);
     if (webFallback) return webFallback;
@@ -976,15 +1222,16 @@ async function getAIResponse(userText: string): Promise<string> {
   }
   // Always attempt fallback generation; the service already handles missing keys safely.
   const response = await huggingFaceService.generateResponse(
-    userText,
+    normalizedInput || userText,
     "You are the SimpleClaw AI assistant. You are a highly professional, accurate, and strategic AI agent. Your goal is to provide world-class technical and general assistance."
   );
   const safeResponse = String(response || '').trim();
-  if (!safeResponse || isLowValueDeflectionReply(safeResponse)) {
+  const offTopic = looksOffTopicForDefinitionPrompt(userText, safeResponse);
+  if (!safeResponse || isLowValueDeflectionReply(safeResponse) || offTopic) {
     const webFallback = await fetchWikipediaFallbackAnswer(userText);
     if (webFallback) return webFallback;
   }
-  if (!safeResponse) return generateEmergencyReply(userText);
+  if (!safeResponse || offTopic) return generateEmergencyReply(userText);
   return safeResponse;
 }
 
@@ -1240,7 +1487,8 @@ const restorePersistedBots = async (): Promise<void> => {
         localBot = new TelegramBot(botToken, { polling: true });
         managedBots.set(botToken, localBot);
       }
-      if (!managedBotListeners.has(botToken)) {
+      const isPrimaryToken = String(TELEGRAM_TOKEN || '').trim() && botToken === TELEGRAM_TOKEN;
+      if (!managedBotListeners.has(botToken) && !isPrimaryToken) {
         localBot.on('message', async (msg) => {
           await handleBotMessage(botToken, msg);
         });
@@ -1348,6 +1596,83 @@ const isSimplePrompt = (text: string): boolean => {
   if (!v) return true;
   if (v.length <= 24 && v.split(/\s+/).length <= 5) return true;
   return false;
+};
+
+const normalizeUserQuestionText = (text: string): string => {
+  let value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return value;
+  if (/^\/[a-z]+(?:@\w+)?\b/i.test(value)) return value;
+
+  const leadPattern = /^(ok(?:ay)?|well|so|right|alright|fine|great|cool|hmm+|uh+|please|pls|bro|sir|assistant|bot)\b[\s,.:;!?-]*/i;
+  let guard = 0;
+  while (guard < 4) {
+    guard += 1;
+    const next = value.replace(leadPattern, '').trim();
+    if (!next || next === value) break;
+    value = next;
+  }
+  return value;
+};
+
+const shouldIsolateFromHistory = (text: string): boolean => {
+  const q = normalizeUserQuestionText(text).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!q) return false;
+  if (!isSimplePrompt(q)) return false;
+  if (!isDefinitionLikePrompt(q)) return false;
+  if (/\b(it|this|that|these|those|they|them|he|she|his|her|their)\b/.test(q)) return false;
+  return /^(what|who|where|when|why|how)\s+(is|are|was|were)\b/.test(q);
+};
+
+const ENTITY_HINT_TERMS = new Set([
+  'nasa', 'isro', 'usa', 'uk', 'uae', 'india', 'china',
+  'meta', 'google', 'apple', 'microsoft', 'tesla', 'amazon',
+  'openai', 'chatgpt', 'facebook', 'instagram', 'youtube', 'wikipedia'
+]);
+
+const isLikelyGenericConceptTopic = (topic: string): boolean => {
+  const clean = String(topic || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!clean) return false;
+  const tokens = clean.split(' ').filter(Boolean);
+  if (!tokens.length) return false;
+  if (tokens.some((token) => ENTITY_HINT_TERMS.has(token))) return false;
+  if (/\b(company|corporation|inc|ltd|agency|organization|university|city|country|state|president|prime minister)\b/.test(clean)) {
+    return false;
+  }
+  if (tokens.length === 1) {
+    const t = tokens[0];
+    if (/^\d+$/.test(t)) return false;
+    return t.length >= 3;
+  }
+  return tokens.length <= 3;
+};
+
+const normalizePromptForModel = (text: string): string => {
+  const raw = normalizeUserQuestionText(String(text || '').trim());
+  if (!raw) return raw;
+  const lower = raw.toLowerCase().replace(/\s+/g, ' ').trim();
+
+  if (isDefinitionLikePrompt(lower)) {
+    const topic = extractKnowledgeTopic(lower).replace(/^(a|an|the)\s+/i, '').trim();
+    if (topic) {
+      if (/^(who(?:'s| is)|who are)\b/.test(lower)) {
+        return `Who is ${topic}?`;
+      }
+      if (isLikelyGenericConceptTopic(topic)) {
+        return `Define ${topic} in general concept terms. Focus on the core meaning and avoid specific movies, TV shows, songs, brands, or proper nouns unless explicitly requested.`;
+      }
+      return `What is ${topic}?`;
+    }
+  }
+
+  if (/(\btop\s*\d+\b|\blist\b|\bgive\b|\bname\b).*(\banimal\b|\banimals\b|\bpeople\b|\bcountries\b|\bcompanies\b|\bways\b|\bsteps\b)/.test(lower)) {
+    const countMatch = lower.match(/\b(\d+)\b/);
+    const count = countMatch ? Math.min(20, Math.max(1, parseInt(countMatch[1], 10))) : 5;
+    if (/animal/.test(lower) && /(deadliest|dangerous|most dangerous)/.test(lower)) {
+      return `List ${count} of the deadliest animals in the world with one-line reason each.`;
+    }
+  }
+
+  return raw;
 };
 
 const isExplicitBriefRequest = (text: string): boolean => {
@@ -1951,7 +2276,10 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
   const cmd = text.match(/^\/([a-z]+)(?:@\w+)?\b/i)?.[1]?.toLowerCase();
   if (!cmd) return null;
   if (cmd === 'help') {
-    return 'Commands:\n/start - welcome message\n/help - show commands\n/reset - clear chat memory\n/stickers on|off|status - sticker replies\n/emoji rich|minimal|status - emoji style\n\nAsk any question directly after these commands.';
+    return 'Commands:\n/start - welcome message\n/help - show commands\n/reset - clear chat memory\n/version - show active bot logic version\n/stickers on|off|status - sticker replies\n/emoji rich|minimal|status - emoji style\n\nAsk any question directly after these commands.';
+  }
+  if (cmd === 'version' || cmd === 'diag') {
+    return `Bot logic version: ${BOT_LOGIC_VERSION}\nFast reply mode: ${FAST_REPLY_MODE ? 'ON' : 'OFF'}\nAI timeout (ms): ${AI_RESPONSE_TIMEOUT_MS}\nCache entries: ${aiResponseCache.size}`;
   }
   if (cmd === 'reset') {
     if (conversationKey) {
@@ -2422,6 +2750,59 @@ const tryComputeMath = (text: string): string | null => {
   }
 };
 
+const isTopicOverlapCheckApplicable = (prompt: string): boolean => {
+  const q = String(prompt || '').toLowerCase().trim();
+  if (!q) return false;
+  if (isGreetingPrompt(q)) return false;
+  if (/^\/[a-z]+/.test(q)) return false;
+  if ((/[+\-*/()]/.test(q) && /\d/.test(q)) || /(^|\s)(solve|calculate|evaluate)\b/.test(q)) return false;
+  if (/(code|coding|typescript|javascript|python|sql|regex|api|function|class|debug|stack trace)/.test(q)) return false;
+  return true;
+};
+
+const extractPromptFocusTokens = (prompt: string): string[] => {
+  const q = String(prompt || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!q) return [];
+  return q
+    .split(/[^a-z0-9]+/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 3 && !WIKI_FALLBACK_STOP_WORDS.has(x))
+    .slice(0, 10);
+};
+
+const looksOffTopicByPromptOverlap = (prompt: string, response: string): boolean => {
+  if (!isTopicOverlapCheckApplicable(prompt)) return false;
+  const promptTokens = Array.from(new Set(extractPromptFocusTokens(prompt)));
+  if (promptTokens.length < 2) return false;
+
+  const normalizedResponse = String(response || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalizedResponse) return true;
+
+  const firstSentence = String(response || '')
+    .split(/[.!?\n]/)[0]
+    ?.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || '';
+
+  const matches = promptTokens.filter((token) => normalizedResponse.includes(token));
+  const openingMatches = promptTokens.filter((token) => firstSentence.includes(token));
+  const isListRequest = /(\btop\s*\d+\b|\blist\b|\bgive\b|\bname\b).*(\b\d+\b)/i.test(prompt)
+    || /\b(top|list|give|name)\b/i.test(prompt) && /\b(animal|countries|people|companies|ways|steps|points)\b/i.test(prompt);
+
+  if (matches.length === 0) return true;
+  if (isListRequest && matches.length < 2) return true;
+  if (promptTokens.length >= 4 && matches.length < 2 && openingMatches.length === 0) return true;
+  return false;
+};
+
 const looksSuspiciousResponse = (prompt: string, response: string): boolean => {
   const out = String(response || '').trim();
   if (!out) return true;
@@ -2430,6 +2811,8 @@ const looksSuspiciousResponse = (prompt: string, response: string): boolean => {
   if (/(2026|2025|2024)/.test(q) && /\b2023\b/.test(r) && !/\b202[4-9]\b/.test(r)) return true;
   if (/i (can('?t|not)|don't) (browse|access real[- ]?time|verify current)/.test(r) && needsRealtimeSearch(q)) return true;
   if (/(market cap|gdp|revenue|population)/.test(q) && !/\d/.test(r)) return true;
+  if (looksOffTopicForDefinitionPrompt(prompt, out)) return true;
+  if (looksOffTopicByPromptOverlap(prompt, out)) return true;
   return false;
 };
 
@@ -2494,39 +2877,40 @@ const generateProfessionalReply = async (
     return askName;
   }
 
-  const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
+  const effectiveInput = normalizeUserQuestionText(trimmedInput) || trimmedInput;
+  const normalizedPrompt = effectiveInput.toLowerCase().replace(/\s+/g, ' ');
   if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|your real name|real name|official name|what (should|can|do) i call you|what is call you|what i call you|what i called you|what did i call you)/.test(normalizedPrompt)) {
     const officialName = getOfficialAssistantName(conversationKey);
     const alias = sanitizeAssistantName(userProfiles.get(conversationKey || '')?.assistantName || '');
     const aliasLine = alias ? ` In this chat, you can also call me ${alias}.` : '';
     const answer = finalizeProfessionalReply(
-      trimmedInput,
+      effectiveInput,
       `My official name is ${officialName}.${aliasLine} I can help with coding, debugging, setup, deployment, and general questions.`,
       conversationKey
     );
-    appendChatHistory(conversationKey, trimmedInput, answer);
+    appendChatHistory(conversationKey, effectiveInput, answer);
     return answer;
   }
-  const instant = instantProfessionalReply(trimmedInput);
+  const instant = instantProfessionalReply(effectiveInput);
   if (instant) {
-    const answer = finalizeProfessionalReply(trimmedInput, instant, conversationKey);
-    appendChatHistory(conversationKey, trimmedInput, answer);
+    const answer = finalizeProfessionalReply(effectiveInput, instant, conversationKey);
+    appendChatHistory(conversationKey, effectiveInput, answer);
     return answer;
   }
   if (isGreetingPrompt(normalizedPrompt)) {
     const fastGreeting = finalizeProfessionalReply(
-      trimmedInput,
+      effectiveInput,
       `Hello. I am ready to support you with a detailed and professional response.
 
 Share your exact question, context, and goal, and I will provide clear analysis plus practical next steps.`,
       conversationKey
     );
-    appendChatHistory(conversationKey, trimmedInput, fastGreeting);
+    appendChatHistory(conversationKey, effectiveInput, fastGreeting);
     return fastGreeting;
   }
   if (/(what can you do|capabilities|how can you help|what do you do)/.test(normalizedPrompt)) {
     const answer = finalizeProfessionalReply(
-      trimmedInput,
+      effectiveInput,
       `I can provide full professional support across technical and strategic work.
 
 What I can do for you:
@@ -2538,29 +2922,42 @@ What I can do for you:
 Send your exact task, and I will deliver a detailed, mature, implementation-ready answer.`,
       conversationKey
     );
-    appendChatHistory(conversationKey, trimmedInput, answer);
+    appendChatHistory(conversationKey, effectiveInput, answer);
     return answer;
   }
   const timeSensitive = isTimeSensitivePrompt(normalizedPrompt);
-  const intent = detectIntent(trimmedInput);
-  const realtimeSearchRequested = needsRealtimeSearch(trimmedInput);
+  const intent = detectIntent(effectiveInput);
+  const realtimeSearchRequested = needsRealtimeSearch(effectiveInput);
   const cacheScope = conversationKey || `${scope}:anonymous`;
   const cacheKey = `${cacheScope}:${RESPONSE_STYLE_VERSION}:${normalizedPrompt}`;
   const cached = timeSensitive ? undefined : aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    const vettedCached = enforceProfessionalReplyQuality(trimmedInput, cached.text, conversationKey);
-    if (!isLowValueDeflectionReply(vettedCached)) {
+    const vettedCached = enforceProfessionalReplyQuality(effectiveInput, cached.text, conversationKey);
+    const cacheSuspicious = looksSuspiciousResponse(effectiveInput, vettedCached);
+    if (!isLowValueDeflectionReply(vettedCached) && !cacheSuspicious) {
+      console.log('[AI_LOG] cache_hit', JSON.stringify({
+        chatId: chatIdentity || null,
+        scope,
+        intent,
+        responseLength: vettedCached.length
+      }));
       return vettedCached;
     }
+    console.log('[AI_LOG] cache_reject', JSON.stringify({
+      chatId: chatIdentity || null,
+      scope,
+      intent,
+      suspicious: cacheSuspicious
+    }));
   }
   if (cached) {
     aiResponseCache.delete(cacheKey);
   }
 
   if (intent === 'math') {
-    const computed = tryComputeMath(trimmedInput);
+    const computed = tryComputeMath(effectiveInput);
     if (computed) {
-      appendChatHistory(conversationKey, trimmedInput, computed);
+      appendChatHistory(conversationKey, effectiveInput, computed);
       return computed;
     }
   }
@@ -2571,66 +2968,94 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
   }
 
   const run = (async (): Promise<string> => {
-    const userProfile = updateUserProfile(conversationKey, trimmedInput);
+    const userProfile = updateUserProfile(conversationKey, effectiveInput);
     const systemPrompt = buildSystemPrompt(intent, userProfile);
+    const modelPrompt = normalizePromptForModel(effectiveInput);
+    const isolateFromHistory = shouldIsolateFromHistory(effectiveInput);
     const startedAt = Date.now();
+    const resolveTopicSafeFallback = async (): Promise<string> => {
+      const fallback = await withTimeout(
+        getAIResponse(effectiveInput),
+        AI_RESPONSE_TIMEOUT_MS,
+        'Fallback AI response timeout'
+      );
+      const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', effectiveInput);
+      const fallbackClean = finalizeProfessionalReply(effectiveInput, fallbackPolished, conversationKey);
+      if (looksSuspiciousResponse(effectiveInput, fallbackClean)) {
+        console.warn('[AI_LOG] fallback_reject', JSON.stringify({
+          chatId: chatIdentity || null,
+          scope,
+          intent,
+          reason: 'suspicious_fallback'
+        }));
+        return finalizeProfessionalReply(effectiveInput, generateEmergencyReply(effectiveInput), conversationKey);
+      }
+      return fallbackClean;
+    };
     console.log('[AI_LOG] request', JSON.stringify({
       chatId: chatIdentity || null,
       scope,
       intent,
       realtimeSearchTriggered: realtimeSearchRequested,
-      question: trimmedInput.slice(0, 400)
+      question: effectiveInput.slice(0, 400),
+      modelPrompt: modelPrompt.slice(0, 240),
+      isolatedHistory: isolateFromHistory
     }));
     try {
-      const history = getChatHistory(conversationKey);
+      const history = isolateFromHistory ? [] : getChatHistory(conversationKey);
       const response = await withTimeout(
-        generateBotResponse(trimmedInput, undefined, history, systemPrompt, aiRuntimeConfig),
+        generateBotResponse(modelPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
         AI_RESPONSE_TIMEOUT_MS,
         'AI response timeout'
       );
-      const polished = formatProfessionalResponse(response || 'No response generated.', trimmedInput);
-      let clean = finalizeProfessionalReply(trimmedInput, polished, conversationKey);
-      if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, trimmedInput))) {
+      const polished = formatProfessionalResponse(response || 'No response generated.', effectiveInput);
+      let clean = finalizeProfessionalReply(effectiveInput, polished, conversationKey);
+      if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, effectiveInput))) {
         clean = finalizeProfessionalReply(
-          trimmedInput,
-          instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput),
+          effectiveInput,
+          instantProfessionalReply(effectiveInput) || generateEmergencyReply(effectiveInput),
           conversationKey
         );
       }
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
-        const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
+        const strictRetryPrompt = `${modelPrompt}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
         const strictRetry = await withTimeout(
           generateBotResponse(strictRetryPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
           AI_RESPONSE_TIMEOUT_MS,
           'AI strict retry timeout'
         );
         clean = finalizeProfessionalReply(
-          trimmedInput,
-          formatProfessionalResponse(strictRetry || clean, trimmedInput),
+          effectiveInput,
+          formatProfessionalResponse(strictRetry || clean, effectiveInput),
           conversationKey
         );
       }
       const shouldRetry = AI_MAX_RETRY_PASSES > 0
-        && !isSimplePrompt(trimmedInput)
-        && (looksLowQualityAnswer(clean, trimmedInput) || looksSuspiciousResponse(trimmedInput, clean));
+        && (
+          looksSuspiciousResponse(effectiveInput, clean)
+          || (!isSimplePrompt(effectiveInput) && looksLowQualityAnswer(clean, effectiveInput))
+        );
       if (shouldRetry) {
-        const retryPrompt = `${trimmedInput}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
+        const retryPrompt = `${modelPrompt}\n\nAnswer directly with accurate, complete details. Avoid generic limitations text. For time-sensitive questions, include current-year context and assumptions.`;
         const retry = await withTimeout(
           generateBotResponse(retryPrompt, undefined, history, systemPrompt, aiRuntimeConfig),
           AI_RESPONSE_TIMEOUT_MS,
           'AI response timeout'
         );
-        const retryPolished = formatProfessionalResponse(retry || clean, trimmedInput);
-        let retryClean = finalizeProfessionalReply(trimmedInput, retryPolished, conversationKey);
-        if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
+        const retryPolished = formatProfessionalResponse(retry || clean, effectiveInput);
+        let retryClean = finalizeProfessionalReply(effectiveInput, retryPolished, conversationKey);
+        if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(effectiveInput)) {
           retryClean = finalizeProfessionalReply(
-            trimmedInput,
-            formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
+            effectiveInput,
+            formatProfessionalResponse(await selfVerifyAnswer(effectiveInput, retryClean, history, systemPrompt, aiRuntimeConfig), effectiveInput),
             conversationKey
           );
         }
-        appendChatHistory(conversationKey, trimmedInput, retryClean);
-        if (!timeSensitive && !isLowValueDeflectionReply(retryClean)) {
+        if (looksSuspiciousResponse(effectiveInput, retryClean)) {
+          retryClean = await resolveTopicSafeFallback();
+        }
+        appendChatHistory(conversationKey, effectiveInput, retryClean);
+        if (!timeSensitive && !isLowValueDeflectionReply(retryClean) && !looksSuspiciousResponse(effectiveInput, retryClean)) {
           aiResponseCache.set(cacheKey, { text: retryClean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
           pruneAiResponseCache();
         }
@@ -2645,15 +3070,18 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
         }));
         return retryClean;
       }
-      if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
+      if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(effectiveInput)) {
         clean = finalizeProfessionalReply(
-          trimmedInput,
-          formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
+          effectiveInput,
+          formatProfessionalResponse(await selfVerifyAnswer(effectiveInput, clean, history, systemPrompt, aiRuntimeConfig), effectiveInput),
           conversationKey
         );
       }
-      appendChatHistory(conversationKey, trimmedInput, clean);
-      if (!timeSensitive && !isLowValueDeflectionReply(clean)) {
+      if (looksSuspiciousResponse(effectiveInput, clean)) {
+        clean = await resolveTopicSafeFallback();
+      }
+      appendChatHistory(conversationKey, effectiveInput, clean);
+      if (!timeSensitive && !isLowValueDeflectionReply(clean) && !looksSuspiciousResponse(effectiveInput, clean)) {
         aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
         pruneAiResponseCache();
       }
@@ -2676,15 +3104,9 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
       }
       console.error('[AI] Primary model failed, switching to fallback:', error);
       try {
-        const fallback = await withTimeout(
-          getAIResponse(trimmedInput),
-          AI_RESPONSE_TIMEOUT_MS,
-          'Fallback AI response timeout'
-        );
-        const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
-        const clean = finalizeProfessionalReply(trimmedInput, fallbackPolished, conversationKey);
-        appendChatHistory(conversationKey, trimmedInput, clean);
-        if (!timeSensitive && !isLowValueDeflectionReply(clean)) {
+        const clean = await resolveTopicSafeFallback();
+        appendChatHistory(conversationKey, effectiveInput, clean);
+        if (!timeSensitive && !isLowValueDeflectionReply(clean) && !looksSuspiciousResponse(effectiveInput, clean)) {
           aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
           pruneAiResponseCache();
         }
@@ -2700,8 +3122,8 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
         return clean;
       } catch (fallbackError) {
         console.error('[AI] Fallback model failed:', fallbackError);
-        const emergency = finalizeProfessionalReply(trimmedInput, generateEmergencyReply(trimmedInput), conversationKey);
-        appendChatHistory(conversationKey, trimmedInput, emergency);
+        const emergency = finalizeProfessionalReply(effectiveInput, generateEmergencyReply(effectiveInput), conversationKey);
+        appendChatHistory(conversationKey, effectiveInput, emergency);
         console.error('[AI_LOG] error', JSON.stringify({
           chatId: chatIdentity || null,
           scope,
@@ -2728,6 +3150,14 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
   const messageText = String(msg.text || '').trim();
   if (!messageText) return;
+
+  // Prevent dual processing when primary token is also deployed as a managed bot.
+  const primaryToken = String(TELEGRAM_TOKEN || '').trim();
+  const primaryBotId = primaryToken ? getBotIdByTelegramToken(primaryToken) : '';
+  if (primaryBotId) {
+    await handleBotMessage(primaryToken, msg);
+    return;
+  }
   
   console.log(`[TELEGRAM] Received message from ${msg.from?.username || 'Unknown'}: ${messageText}`);
   try {
@@ -3118,7 +3548,8 @@ const deployTelegramBotForUser = async (args: DeployTelegramBotArgs): Promise<De
       managedBots.set(botToken, localBot);
     }
 
-    if (!managedBotListeners.has(botToken)) {
+    const isPrimaryToken = String(TELEGRAM_TOKEN || '').trim() && botToken === TELEGRAM_TOKEN;
+    if (!managedBotListeners.has(botToken) && !isPrimaryToken) {
       localBot.on('message', async (msg) => {
         await handleBotMessage(botToken, msg);
       });
