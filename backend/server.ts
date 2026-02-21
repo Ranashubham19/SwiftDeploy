@@ -158,7 +158,7 @@ const CHAT_HISTORY_MAX_TURNS = parseInt(process.env.CHAT_HISTORY_MAX_TURNS || '1
 const CHAT_HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = parseInt(process.env.AI_CACHE_MAX_ENTRIES || '800', 10);
-const RESPONSE_STYLE_VERSION = 'pro_layout_v4_context_guard';
+const RESPONSE_STYLE_VERSION = 'pro_layout_v5_reliable_fallback';
 const MAX_USER_PROMPT_LENGTH = parseInt(process.env.MAX_USER_PROMPT_LENGTH || '6000', 10);
 const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -200,8 +200,8 @@ const TG_STICKER_SUCCESS_IDS = parseStickerPool(process.env.TG_STICKER_SUCCESS_I
 const TG_STICKER_CODING_IDS = parseStickerPool(process.env.TG_STICKER_CODING_IDS || '', TG_STICKER_CODING_ID);
 const TG_STICKER_MATH_IDS = parseStickerPool(process.env.TG_STICKER_MATH_IDS || '', TG_STICKER_MATH_ID);
 const TG_STICKER_MOTIVATION_IDS = parseStickerPool(process.env.TG_STICKER_MOTIVATION_IDS || '', TG_STICKER_MOTIVATION_ID);
-const FORCE_RICH_EMOJI_STYLE = (process.env.BOT_FORCE_RICH_EMOJI_STYLE || 'true').trim().toLowerCase() !== 'false';
-const FORCE_STICKERS_ON = (process.env.BOT_FORCE_STICKERS_ON || 'true').trim().toLowerCase() !== 'false';
+const FORCE_RICH_EMOJI_STYLE = (process.env.BOT_FORCE_RICH_EMOJI_STYLE || 'false').trim().toLowerCase() !== 'false';
+const FORCE_STICKERS_ON = (process.env.BOT_FORCE_STICKERS_ON || 'false').trim().toLowerCase() !== 'false';
 const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
@@ -587,7 +587,7 @@ const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
 
 const app = express();
 const startedAtIso = new Date().toISOString();
-const BOT_LOGIC_VERSION = 'context_guard_v3_2026-02-22';
+const BOT_LOGIC_VERSION = 'context_guard_v4_2026-02-22';
 if (isProduction) {
   app.set('trust proxy', 1);
 }
@@ -619,9 +619,9 @@ const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'false').trim().toLowerCase() !== 'false';
 const rawTimeoutMs = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || (FAST_REPLY_MODE ? '15000' : '25000'), 10);
 const AI_RESPONSE_TIMEOUT_MS = Math.max(5000, Math.min(rawTimeoutMs, 20000));
-const AI_MAX_RETRY_PASSES = FAST_REPLY_MODE ? 0 : Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || '1', 10));
-const AI_ENABLE_STRICT_RETRY = FAST_REPLY_MODE ? false : (process.env.AI_ENABLE_STRICT_RETRY || 'true').trim().toLowerCase() !== 'false';
-const AI_ENABLE_SELF_VERIFY = FAST_REPLY_MODE ? false : (process.env.AI_ENABLE_SELF_VERIFY || 'true').trim().toLowerCase() !== 'false';
+const AI_MAX_RETRY_PASSES = Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || (FAST_REPLY_MODE ? '0' : '1'), 10));
+const AI_ENABLE_STRICT_RETRY = (process.env.AI_ENABLE_STRICT_RETRY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
+const AI_ENABLE_SELF_VERIFY = (process.env.AI_ENABLE_SELF_VERIFY || (FAST_REPLY_MODE ? 'false' : 'true')).trim().toLowerCase() !== 'false';
 const TELEGRAM_STREAMING_ENABLED = false;
 const TELEGRAM_STREAM_START_DELAY_MS = parseInt(process.env.TELEGRAM_STREAM_START_DELAY_MS || '700', 10);
 const TELEGRAM_STREAM_PROGRESS_INTERVAL_MS = parseInt(process.env.TELEGRAM_STREAM_PROGRESS_INTERVAL_MS || '3500', 10);
@@ -1128,13 +1128,15 @@ const scoreWikipediaCandidate = (topic: string, candidate: WikiSearchCandidate):
   return score;
 };
 
+const WIKI_FALLBACK_TIMEOUT_MS = parseInt(process.env.WIKI_FALLBACK_TIMEOUT_MS || '4200', 10);
+
 const fetchWikipediaSummary = async (title: string): Promise<{ title: string; extract: string } | null> => {
   const normalizedTitle = String(title || '').trim();
   if (!normalizedTitle) return null;
   const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(normalizedTitle)}`;
   const summaryResp = await withTimeout(
     fetch(summaryUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
-    2800,
+    WIKI_FALLBACK_TIMEOUT_MS,
     'WIKI_SUMMARY_TIMEOUT'
   );
   if (!summaryResp.ok) return null;
@@ -1165,7 +1167,7 @@ const fetchWikipediaFallbackAnswer = async (userText: string): Promise<string | 
       `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(topic)}&utf8=1&format=json&srlimit=5`;
     const searchResp = await withTimeout(
       fetch(searchUrl, { headers: { 'User-Agent': 'SwiftDeployBot/1.0' } }),
-      2800,
+      WIKI_FALLBACK_TIMEOUT_MS,
       'WIKI_SEARCH_TIMEOUT'
     );
     if (!searchResp.ok) return null;
@@ -1196,22 +1198,48 @@ const fetchWikipediaFallbackAnswer = async (userText: string): Promise<string | 
 
 async function getAIResponse(userText: string): Promise<string> {
   const normalizedInput = normalizePromptForModel(userText);
+  const preferredProvider = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
+  const hasOpenAIKey = Boolean(String(process.env.OPENAI_API_KEY || '').trim());
+  const hasOpenRouterKey = Boolean(String(process.env.OPENROUTER_API_KEY || '').trim());
+  const hasAnthropicKey = Boolean(String(process.env.ANTHROPIC_API_KEY || '').trim());
+  const hasMoonshotKey = Boolean(String(process.env.MOONSHOT_API_KEY || '').trim());
+  const hasSarvamKey = Boolean(String(process.env.SARVAM_API_KEYS || process.env.SARVAM_API_KEY || '').trim());
   const hasGeminiKey = String(process.env.GEMINI_API_KEY || '').trim().startsWith('AIza');
 
-  // Provider-level recovery: if the main router failed, force a clean Gemini pass once.
-  if (hasGeminiKey) {
+  const providerCandidates = Array.from(new Set([
+    preferredProvider,
+    'openai',
+    'openrouter',
+    'anthropic',
+    'moonshot',
+    'sarvam',
+    'gemini'
+  ].filter(Boolean)));
+
+  const isProviderConfigured = (provider: string): boolean => {
+    if (provider === 'openai') return hasOpenAIKey;
+    if (provider === 'openrouter') return hasOpenRouterKey;
+    if (provider === 'anthropic') return hasAnthropicKey;
+    if (provider === 'moonshot') return hasMoonshotKey;
+    if (provider === 'sarvam') return hasSarvamKey;
+    if (provider === 'gemini') return hasGeminiKey;
+    return false;
+  };
+
+  for (const provider of providerCandidates) {
+    if (!isProviderConfigured(provider)) continue;
     try {
-      const forcedGemini = await withTimeout(
-        generateBotResponse(normalizedInput || userText, undefined, [], undefined, { provider: 'gemini', forceProvider: true }),
+      const forced = await withTimeout(
+        generateBotResponse(normalizedInput || userText, undefined, [], undefined, { provider, forceProvider: true }),
         AI_RESPONSE_TIMEOUT_MS,
-        'FORCED_GEMINI_TIMEOUT'
+        `FORCED_${provider.toUpperCase()}_TIMEOUT`
       );
-      const forcedText = String(forcedGemini || '').trim();
+      const forcedText = String(forced || '').trim();
       if (forcedText && !isLowValueDeflectionReply(forcedText) && !looksOffTopicForDefinitionPrompt(userText, forcedText)) {
         return forcedText;
       }
     } catch {
-      // Continue with secondary fallbacks.
+      // Try next configured provider.
     }
   }
 
@@ -1603,11 +1631,19 @@ const normalizeUserQuestionText = (text: string): string => {
   if (!value) return value;
   if (/^\/[a-z]+(?:@\w+)?\b/i.test(value)) return value;
 
-  const leadPattern = /^(ok(?:ay)?|well|so|right|alright|fine|great|cool|hmm+|uh+|please|pls|bro|sir|assistant|bot)\b[\s,.:;!?-]*/i;
+  const softLeadPattern = /^(ok(?:ay)?|well|so|right|alright|fine|great|cool|hmm+|uh+|please|pls|bro|sir|assistant|bot)\b[\s,.:;!?-]*/i;
+  const scaffoldPatterns = [
+    /^(do you know|can you|could you|would you|will you|can u|could u|would u|will u)\b[\s,.:;!?-]*/i,
+    /^(tell me(?: about)?|describe|explain|define)\b[\s,.:;!?-]*/i,
+    /^(i want to know|i need to know|help me understand)\b[\s,.:;!?-]*/i
+  ];
   let guard = 0;
-  while (guard < 4) {
+  while (guard < 6) {
     guard += 1;
-    const next = value.replace(leadPattern, '').trim();
+    let next = value.replace(softLeadPattern, '').trim();
+    for (const pattern of scaffoldPatterns) {
+      next = next.replace(pattern, '').trim();
+    }
     if (!next || next === value) break;
     value = next;
   }
