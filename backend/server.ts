@@ -847,7 +847,7 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|algorithm|leetcode)/.test(lower)) {
     return 'Yes, I can help with coding. Send the exact problem statement and preferred language, and I will provide a correct solution with explanation.';
   }
-  return 'I can help with this. Share one clear question or goal, and I will provide a direct professional answer.';
+  return 'I am ready to help. Ask your question directly, and I will give you a clear professional answer.';
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -1151,7 +1151,7 @@ const instantProfessionalReply = (text: string): string | null => {
     return 'Yes. I can write, debug, optimize, and explain code in Python, JavaScript/TypeScript, Java, C++, SQL, and more. Share the exact problem and preferred language.';
   }
   if (/who are you|what are you/.test(q)) {
-    return `I am ${DEFAULT_ASSISTANT_NAME}. I can help with coding, strategy, learning, troubleshooting, and practical planning.`;
+    return 'I am your AI assistant for this bot. I can help with coding, strategy, learning, troubleshooting, and practical planning.';
   }
   if (/what can you do|your capabilities|how can you help/.test(q)) {
     return 'I can solve technical problems, explain concepts clearly, draft professional content, and provide actionable step-by-step plans.';
@@ -1589,18 +1589,17 @@ const sanitizeAssistantName = (input: string): string => {
 
 const getAssistantName = (conversationKey?: string): string => {
   if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
+  const profile = userProfiles.get(conversationKey);
+  const preferred = sanitizeAssistantName(profile?.assistantName || '');
+  if (preferred) return preferred;
   const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
   const telegramBotId = String(tgMatch?.[1] || '').trim();
   if (telegramBotId) {
-    // Telegram identity is controlled by BotFather metadata only.
     const botName = sanitizeAssistantName(telegramBotNames.get(telegramBotId) || '');
     if (botName) return botName;
     const botUsername = sanitizeAssistantName(telegramBotUsernames.get(telegramBotId) || '');
     if (botUsername) return botUsername;
   }
-  const profile = userProfiles.get(conversationKey);
-  const named = sanitizeAssistantName(profile?.assistantName || '');
-  if (named) return named;
   return DEFAULT_ASSISTANT_NAME;
 };
 
@@ -1623,7 +1622,7 @@ const extractAssistantRenameCommand = (text: string): string | null => {
   const normalized = String(text || '').trim();
   if (!normalized) return null;
   const match = normalized.match(
-    /(?:from now (?:on|onwards)\s*,?\s*)?(?:your name is|you are|call yourself|i will call you)\s+([a-zA-Z][a-zA-Z0-9 _-]{1,31})/i
+    /(?:from now (?:on|onwards)\s*,?\s*)?(?:your name is|you are|call yourself|i will call you|can i call you|i call you|from now i call you)\s+([a-zA-Z][a-zA-Z0-9 _-]{1,31})/i
   );
   if (!match?.[1]) return null;
   const raw = match[1].replace(/\b(ok|okay|please|now)\b.*$/i, '').trim();
@@ -1972,18 +1971,18 @@ const generateProfessionalReply = async (
   if (commandReply) {
     return commandReply;
   }
-  const isTelegramConversation = Boolean(conversationKey && /^telegram:/i.test(conversationKey));
-  const renameTo = isTelegramConversation ? null : extractAssistantRenameCommand(trimmedInput);
+  const renameTo = extractAssistantRenameCommand(trimmedInput);
   if (renameTo) {
     const appliedName = setAssistantNamePreference(conversationKey, renameTo);
-    const confirm = `✅ Done. My name in this chat is now ${appliedName}.`;
+    const confirm = `Done. In this chat, you can call me ${appliedName}.`;
     appendChatHistory(conversationKey, trimmedInput, confirm);
     return confirm;
   }
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
-  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??)/.test(normalizedPrompt)) {
-    const answer = `I am ${getAssistantName(conversationKey)} assistant. I can help with coding, debugging, bot setup, deployment, and general questions.`;
+  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what is call you|what i call you)/.test(normalizedPrompt)) {
+    const currentName = getAssistantName(conversationKey);
+    const answer = `You can call me ${currentName}. I can help with coding, debugging, setup, deployment, and general questions.`;
     appendChatHistory(conversationKey, trimmedInput, answer);
     return answer;
   }
