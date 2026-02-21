@@ -318,25 +318,22 @@ const purgeExpiredTelegramDeployIntents = (): void => {
   }
 };
 
-const userHasAnyDeployedBot = (email: string): boolean => {
+const userHasAnyDeployedTelegramBot = (email: string): boolean => {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return false;
   for (const owner of telegramBotOwners.values()) {
     if (String(owner || '').trim().toLowerCase() === normalized) return true;
   }
-  for (const owner of discordBots.values()) {
-    if (String(owner?.createdBy || '').trim().toLowerCase() === normalized) return true;
-  }
   const state = loadPersistedBotState();
   if (state.telegramBots.some((b) => String(b?.ownerEmail || '').trim().toLowerCase() === normalized)) return true;
-  if (state.discordBots.some((b) => String(b?.createdBy || '').trim().toLowerCase() === normalized)) return true;
   return false;
 };
 
 const requiresTelegramSubscription = (email: string): boolean => {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return true;
-  if (userHasAnyDeployedBot(normalized)) return false;
+  // Existing Telegram bot owners (grandfathered) skip the subscription gate.
+  if (userHasAnyDeployedTelegramBot(normalized)) return false;
   return !ensureUserSubscriptionState(normalized).isSubscribed;
 };
 
@@ -3336,10 +3333,17 @@ app.get('/bots', requireAuth, (req, res) => {
     .filter(([id]) => String(telegramBotOwners.get(id) || '').trim().toLowerCase() === userEmail)
     .map(([id, token]) => {
       const credit = applyCreditDecay(id);
+      const botUsername = String(telegramBotUsernames.get(id) || '').trim();
+      const botName = String(telegramBotNames.get(id) || '').trim();
       return {
         id,
         platform: 'TELEGRAM',
         token: token.substring(0, 10) + '...', // Mask the token
+        botUsername: botUsername || null,
+        botName: botName || null,
+        telegramLink: botUsername ? `https://t.me/${botUsername}` : null,
+        aiProvider: telegramBotAiProviders.get(id) || null,
+        aiModel: telegramBotAiModels.get(id) || null,
         creditRemainingUsd: credit.remainingUsd,
         creditDepleted: credit.depleted
       };
@@ -4063,7 +4067,7 @@ app.post('/billing/create-telegram-subscription-session', requireAuth, billingRa
     return res.status(401).json({ success: false, message: 'Authentication required' });
   }
 
-  // Existing bot owners skip the subscription gate.
+  // Existing Telegram bot owners skip the subscription gate.
   if (!requiresTelegramSubscription(userEmail)) {
     return res.json({ success: true, subscriptionRequired: false });
   }

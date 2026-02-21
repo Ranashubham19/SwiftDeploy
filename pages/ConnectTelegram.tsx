@@ -78,6 +78,31 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setToken('748291035:AAH_f9xS0v5k2m8Lp9qZ-rY7tW4u3i1o');
   };
 
+  // Existing users who already have an active Telegram bot should land on the credits page directly.
+  useEffect(() => {
+    if (isSuccessStage || isSubscribeStage) return;
+    const existingBot = bots.find((b) => b.platform === Platform.TELEGRAM);
+    if (!existingBot) return;
+
+    const params = new URLSearchParams();
+    params.set('stage', 'success');
+    params.set('botId', existingBot.id);
+    const username =
+      existingBot.telegramUsername ||
+      (existingBot.name?.startsWith('@') ? existingBot.name.slice(1) : '');
+    if (username) params.set('bot', username);
+    navigate(`/connect/telegram?${params.toString()}`, { replace: true, state: location.state });
+  }, [isSuccessStage, isSubscribeStage, bots, navigate]);
+
+  // Keep UI state in sync when the URL contains a success stage (e.g., redirected from Stripe or deep link).
+  useEffect(() => {
+    if (!isSuccessStage) return;
+    setFlowStep('success');
+    if (stageBotUsername) setConnectedBotUsername(stageBotUsername);
+    if (stageBotId) setConnectedBotId(stageBotId);
+    if (stageBotLink) setConnectedBotLink(stageBotLink);
+  }, [isSuccessStage, stageBotUsername, stageBotId, stageBotLink]);
+
   useEffect(() => {
     if (!isSuccessStage || !stageBotId) return;
     let active = true;
@@ -130,6 +155,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   }, [isSuccessStage, stageCreditStatus, stageSessionId, stageBotId]);
 
   const applyDeployResult = (result: any) => {
+    const hadTelegramBot = bots.some((b) => b.platform === Platform.TELEGRAM);
     const botId = String(result.botId || '').trim() || Math.random().toString(36).slice(2, 11);
     const botUsername = String(result.botUsername || '').trim();
     const botNameFromTelegram = String(result.botName || '').trim();
@@ -162,9 +188,20 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setCreditWarning(String(result.warning || (result.creditDepleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : '')));
     setShowConnectedToast(true);
     window.setTimeout(() => setShowConnectedToast(false), 4200);
-    setFlowStep('send-first-message');
     setIsDeploying(false);
     setDeployStep('input');
+
+    if (hadTelegramBot) {
+      setFlowStep('success');
+      const params = new URLSearchParams();
+      params.set('stage', 'success');
+      if (botUsername) params.set('bot', botUsername);
+      if (botId) params.set('botId', botId);
+      navigate(`/connect/telegram?${params.toString()}`, { replace: true, state: location.state });
+      return;
+    }
+
+    setFlowStep('send-first-message');
   };
 
   useEffect(() => {
@@ -231,6 +268,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         })
       });
       const subscriptionData = await subscriptionResponse.json().catch(() => ({}));
+      if (!subscriptionResponse.ok) {
+        throw new Error(subscriptionData?.message || subscriptionData?.error || 'Unable to start secure checkout.');
+      }
       if (subscriptionResponse.ok && subscriptionData?.subscriptionRequired && subscriptionData?.checkoutUrl) {
         window.location.href = String(subscriptionData.checkoutUrl);
         return;
@@ -255,10 +295,31 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         })
       });
 
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        if (response.status === 402 && result?.subscriptionRequired) {
+          const retryResponse = await fetch(apiUrl('/billing/create-telegram-subscription-session'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              botToken: token.trim(),
+              model: String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH
+            })
+          });
+          const retryData = await retryResponse.json().catch(() => ({}));
+          if (retryResponse.ok && retryData?.checkoutUrl) {
+            window.location.href = String(retryData.checkoutUrl);
+            return;
+          }
+          throw new Error(retryData?.message || result?.error || 'Subscription required before deployment.');
+        }
+        throw new Error(result?.error || result?.message || 'Deployment failed');
+      }
 
       if (!result.success) {
-        throw new Error(result.error || 'Deployment failed');
+        throw new Error(result?.error || result?.message || 'Deployment failed');
       }
       applyDeployResult(result);
     } catch (error: any) {

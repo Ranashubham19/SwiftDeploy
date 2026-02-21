@@ -13,25 +13,73 @@ import PrivacyPolicy from './pages/PrivacyPolicy';
 import { User, Bot, Platform, AIModel, BotStatus } from './types';
 import { apiUrl } from './utils/api';
 
-const INITIAL_BOTS: Bot[] = [
-  {
-    id: 'bot_1',
-    name: 'SimpleClaw-Alpha',
-    platform: Platform.TELEGRAM,
-    token: '••••••••••••••••',
-    model: AIModel.CLAUDE_OPUS_4_5,
+const mapTelegramModel = (providerRaw: string, modelRaw: string): AIModel => {
+  const provider = String(providerRaw || '').trim().toLowerCase();
+  const model = String(modelRaw || '').trim().toLowerCase();
+  if (provider === 'anthropic' && model.includes('claude-opus-4-5')) return AIModel.CLAUDE_OPUS_4_5;
+  if (provider === 'openai' && (model.includes('gpt-5.2') || model.includes('gpt-5-2'))) return AIModel.GPT_5_2;
+  if (provider === 'gemini' && model.includes('gemini-3-pro')) return AIModel.GEMINI_3_PRO;
+  if (provider === 'gemini' && model.includes('gemini-3-flash')) return AIModel.GEMINI_3_FLASH;
+  return AIModel.GEMINI_3_FLASH;
+};
+
+const mapApiBot = (raw: any): Bot | null => {
+  const id = String(raw?.id || '').trim();
+  if (!id) return null;
+
+  const platformRaw = String(raw?.platform || '').trim().toUpperCase();
+  const platform = platformRaw === 'DISCORD' ? Platform.DISCORD : Platform.TELEGRAM;
+  const token = String(raw?.token || '').trim();
+
+  const botUsername = String(raw?.botUsername || '').trim();
+  const botName = String(raw?.botName || '').trim();
+  const telegramLink = String(raw?.telegramLink || '').trim();
+
+  const name =
+    botName ||
+    (botUsername ? `@${botUsername}` : '') ||
+    (platform === Platform.DISCORD ? 'Discord Bot' : 'Telegram Bot');
+
+  const model =
+    platform === Platform.TELEGRAM
+      ? mapTelegramModel(String(raw?.aiProvider || ''), String(raw?.aiModel || ''))
+      : AIModel.GEMINI_3_FLASH;
+
+  return {
+    id,
+    name,
+    platform,
+    token: token || '********',
+    model,
     status: BotStatus.ACTIVE,
     messageCount: 0,
     tokenUsage: 0,
     lastActive: new Date().toISOString(),
-    memoryEnabled: true
-  }
-];
+    memoryEnabled: true,
+    telegramUsername: botUsername || undefined,
+    telegramLink: telegramLink || (botUsername ? `https://t.me/${botUsername}` : undefined)
+  };
+};
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const loadBots = async () => {
+    try {
+      const response = await fetch(apiUrl('/bots'), { credentials: 'include' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(data?.bots)) {
+        setBots([]);
+        return;
+      }
+      const mapped = data.bots.map(mapApiBot).filter(Boolean) as Bot[];
+      setBots(mapped);
+    } catch {
+      setBots([]);
+    }
+  };
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -50,9 +98,7 @@ const App: React.FC = () => {
               isSubscribed: Boolean(data.user.isSubscribed)
             };
             setUser(restoredUser);
-            if (restoredUser.name.includes('Shubham') || restoredUser.name.includes('Shubam')) {
-              setBots(INITIAL_BOTS);
-            }
+            await loadBots();
           }
         }
       } catch {
@@ -67,9 +113,7 @@ const App: React.FC = () => {
 
   const handleLogin = (userData: User) => {
     setUser(userData);
-    if (userData.name.includes('Shubham') || userData.name.includes('Shubam')) {
-      setBots(INITIAL_BOTS);
-    }
+    void loadBots();
   };
 
   if (isLoading) {
