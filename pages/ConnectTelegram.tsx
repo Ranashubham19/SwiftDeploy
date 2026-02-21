@@ -11,17 +11,22 @@ type DeployStep = 'input' | 'verifying' | 'provisioning' | 'webhooking';
 const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ user, bots, setBots }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const isSuccessStage = new URLSearchParams(location.search).get('stage') === 'success';
-  const stageBotUsername = new URLSearchParams(location.search).get('bot') || '';
-  const stageBotId = new URLSearchParams(location.search).get('botId') || '';
-  const stageCreditStatus = new URLSearchParams(location.search).get('credit') || '';
-  const stageSessionId = new URLSearchParams(location.search).get('session_id') || '';
+  const urlParams = new URLSearchParams(location.search);
+  const stage = urlParams.get('stage') || '';
+  const isSuccessStage = stage === 'success';
+  const isSubscribeStage = stage === 'subscribe';
+  const stageBotUsername = urlParams.get('bot') || '';
+  const stageBotId = urlParams.get('botId') || '';
+  const stageCreditStatus = urlParams.get('credit') || '';
+  const stageSubscribeStatus = urlParams.get('subscribe') || '';
+  const stageIntentId = urlParams.get('intentId') || '';
+  const stageSessionId = urlParams.get('session_id') || '';
   const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
 
   const [token, setToken] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployStep, setDeployStep] = useState<DeployStep>('input');
-  const [flowStep, setFlowStep] = useState<FlowStep>(isSuccessStage ? 'success' : 'token');
+  const [flowStep, setFlowStep] = useState<FlowStep>(isSuccessStage ? 'success' : isSubscribeStage ? 'pairing' : 'token');
   const [deployError, setDeployError] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
   const [connectedBotUsername, setConnectedBotUsername] = useState(stageBotUsername);
@@ -124,21 +129,122 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     };
   }, [isSuccessStage, stageCreditStatus, stageSessionId, stageBotId]);
 
+  const applyDeployResult = (result: any) => {
+    const botId = String(result.botId || '').trim() || Math.random().toString(36).slice(2, 11);
+    const botUsername = String(result.botUsername || '').trim();
+    const botNameFromTelegram = String(result.botName || '').trim();
+    const telegramLink = String(result.telegramLink || '').trim() || (botUsername ? `https://t.me/${botUsername}` : '');
+    const botName = botNameFromTelegram || (botUsername ? `@${botUsername}` : `TelegramBot-${bots.length + 1}`);
+    const newBot: Bot = {
+      id: botId,
+      name: botName,
+      platform: Platform.TELEGRAM,
+      token: token.trim(),
+      model: location.state?.model || AIModel.GEMINI_3_FLASH,
+      status: BotStatus.ACTIVE,
+      messageCount: 0,
+      tokenUsage: 0,
+      lastActive: new Date().toISOString(),
+      memoryEnabled: true,
+      webhookUrl: result.webhookUrl,
+      telegramUsername: botUsername || undefined,
+      telegramLink: telegramLink || undefined
+    };
+
+    setBots([newBot, ...bots]);
+    setConnectedBotId(botId);
+    setConnectedBotUsername(botUsername);
+    setConnectedBotLink(telegramLink);
+    setConnectedAiProvider(String(result.aiProvider || ''));
+    setConnectedAiModel(String(result.aiModel || ''));
+    setRemainingCreditUsd(Number(result.creditRemainingUsd ?? 10));
+    setIsOutOfCredit(Boolean(result.creditDepleted));
+    setCreditWarning(String(result.warning || (result.creditDepleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : '')));
+    setShowConnectedToast(true);
+    window.setTimeout(() => setShowConnectedToast(false), 4200);
+    setFlowStep('send-first-message');
+    setIsDeploying(false);
+    setDeployStep('input');
+  };
+
+  useEffect(() => {
+    if (!isSubscribeStage) return;
+    if (stageSubscribeStatus === 'cancel') {
+      setDeployError('Subscription payment cancelled. Please try again.');
+      setIsDeploying(false);
+      setDeployStep('input');
+      setFlowStep('token');
+      navigate('/connect/telegram', { replace: true, state: location.state });
+      return;
+    }
+    if (stageSubscribeStatus !== 'success' || !stageSessionId || !stageIntentId) return;
+    let active = true;
+    setDeployError('');
+    setIsDeploying(true);
+    setDeployStep('verifying');
+    setFlowStep('pairing');
+
+    const confirmSubscriptionAndDeploy = async () => {
+      try {
+        const response = await fetch(apiUrl('/billing/confirm-telegram-subscription-session'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ sessionId: stageSessionId, intentId: stageIntentId })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!active) return;
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.message || data?.error || 'Subscription confirmation failed.');
+        }
+        applyDeployResult(data);
+        navigate('/connect/telegram', { replace: true, state: location.state });
+      } catch (error: any) {
+        if (!active) return;
+        setIsDeploying(false);
+        setDeployStep('input');
+        setFlowStep('token');
+        setDeployError(error?.message || 'Unable to confirm subscription.');
+      }
+    };
+
+    confirmSubscriptionAndDeploy();
+    return () => {
+      active = false;
+    };
+  }, [isSubscribeStage, stageSubscribeStatus, stageSessionId, stageIntentId]);
+
   const handleConnect = async () => {
     if (!token) return;
     setDeployError('');
     setIsDeploying(true);
 
-    setDeployStep('verifying');
-    await new Promise((r) => setTimeout(r, 1000));
-
-    setDeployStep('provisioning');
-    await new Promise((r) => setTimeout(r, 1000));
-
-    setDeployStep('webhooking');
-    await new Promise((r) => setTimeout(r, 1000));
-
     try {
+      // New users (no existing deployments) must complete the $39 subscription checkout before activation.
+      const subscriptionResponse = await fetch(apiUrl('/billing/create-telegram-subscription-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          botToken: token.trim(),
+          model: String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH
+        })
+      });
+      const subscriptionData = await subscriptionResponse.json().catch(() => ({}));
+      if (subscriptionResponse.ok && subscriptionData?.subscriptionRequired && subscriptionData?.checkoutUrl) {
+        window.location.href = String(subscriptionData.checkoutUrl);
+        return;
+      }
+
+      setDeployStep('verifying');
+      await new Promise((r) => setTimeout(r, 800));
+
+      setDeployStep('provisioning');
+      await new Promise((r) => setTimeout(r, 900));
+
+      setDeployStep('webhooking');
+      await new Promise((r) => setTimeout(r, 900));
+
       const response = await fetch(apiUrl('/deploy-bot'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -154,42 +260,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       if (!result.success) {
         throw new Error(result.error || 'Deployment failed');
       }
-
-      const botId = String(result.botId || '').trim() || Math.random().toString(36).slice(2, 11);
-      const botUsername = String(result.botUsername || '').trim();
-      const botNameFromTelegram = String(result.botName || '').trim();
-      const telegramLink = String(result.telegramLink || '').trim() || (botUsername ? `https://t.me/${botUsername}` : '');
-      const botName = botNameFromTelegram || (botUsername ? `@${botUsername}` : `TelegramBot-${bots.length + 1}`);
-      const newBot: Bot = {
-        id: botId,
-        name: botName,
-        platform: Platform.TELEGRAM,
-        token: token.trim(),
-        model: location.state?.model || AIModel.GEMINI_3_FLASH,
-        status: BotStatus.ACTIVE,
-        messageCount: 0,
-        tokenUsage: 0,
-        lastActive: new Date().toISOString(),
-        memoryEnabled: true,
-        webhookUrl: result.webhookUrl,
-        telegramUsername: botUsername || undefined,
-        telegramLink: telegramLink || undefined
-      };
-
-      setBots([newBot, ...bots]);
-      setConnectedBotId(botId);
-      setConnectedBotUsername(botUsername);
-      setConnectedBotLink(telegramLink);
-      setConnectedAiProvider(String(result.aiProvider || ''));
-      setConnectedAiModel(String(result.aiModel || ''));
-      setRemainingCreditUsd(Number(result.creditRemainingUsd ?? 10));
-      setIsOutOfCredit(Boolean(result.creditDepleted));
-      setCreditWarning(Boolean(result.creditDepleted) ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : '');
-      setShowConnectedToast(true);
-      window.setTimeout(() => setShowConnectedToast(false), 4200);
-      setFlowStep('send-first-message');
-      setIsDeploying(false);
-      setDeployStep('input');
+      applyDeployResult(result);
     } catch (error: any) {
       setIsDeploying(false);
       setDeployStep('input');
