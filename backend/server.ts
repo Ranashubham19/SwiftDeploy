@@ -194,6 +194,8 @@ const TG_STICKER_SUCCESS_IDS = parseStickerPool(process.env.TG_STICKER_SUCCESS_I
 const TG_STICKER_CODING_IDS = parseStickerPool(process.env.TG_STICKER_CODING_IDS || '', TG_STICKER_CODING_ID);
 const TG_STICKER_MATH_IDS = parseStickerPool(process.env.TG_STICKER_MATH_IDS || '', TG_STICKER_MATH_ID);
 const TG_STICKER_MOTIVATION_IDS = parseStickerPool(process.env.TG_STICKER_MOTIVATION_IDS || '', TG_STICKER_MOTIVATION_ID);
+const FORCE_RICH_EMOJI_STYLE = (process.env.BOT_FORCE_RICH_EMOJI_STYLE || 'true').trim().toLowerCase() !== 'false';
+const FORCE_STICKERS_ON = (process.env.BOT_FORCE_STICKERS_ON || 'true').trim().toLowerCase() !== 'false';
 const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
@@ -1445,6 +1447,7 @@ const applyProfessionalLayout = (text: string): string => {
 };
 
 const getEmojiStyleForConversation = (conversationKey?: string): 'rich' | 'minimal' => {
+  if (FORCE_RICH_EMOJI_STYLE) return 'rich';
   if (!conversationKey) return 'rich';
   return userProfiles.get(conversationKey)?.emojiStyle === 'minimal' ? 'minimal' : 'rich';
 };
@@ -1583,6 +1586,7 @@ const enforceProfessionalReplyQuality = (prompt: string, reply: string, conversa
       const applied = setAssistantNamePreference(conversationKey, renameTo);
       return `Done. In this chat, you can call me ${applied}.`;
     }
+    return 'Please provide the exact name you want me to use in this chat.';
   }
   const instant = instantProfessionalReply(prompt);
   if (instant && !isLowValueDeflectionReply(instant)) return instant;
@@ -1695,6 +1699,9 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
   if (cmd === 'stickers') {
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
     if (!conversationKey) return 'Sticker settings are unavailable in this context.';
+    if (FORCE_STICKERS_ON) {
+      return 'Stickers are ON for this bot.';
+    }
     if (!mode || mode === 'status') {
       const enabled = userProfiles.get(conversationKey)?.stickersEnabled !== false;
       return enabled ? 'Stickers are ON.' : 'Stickers are OFF.';
@@ -1716,6 +1723,9 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
   if (cmd === 'emoji') {
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
     if (!conversationKey) return 'Emoji settings are unavailable in this context.';
+    if (FORCE_RICH_EMOJI_STYLE) {
+      return 'Emoji style is RICH for this bot.';
+    }
     if (!mode || mode === 'status') {
       const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
       return `Emoji style is ${style.toUpperCase()}.`;
@@ -1787,6 +1797,26 @@ const setAssistantNamePreference = (conversationKey: string | undefined, name: s
   return nextName;
 };
 
+const isRenameIntentPrompt = (text: string): boolean => {
+  const normalized = String(text || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return /(your name is|you are|call yourself|i will call you|can i call you|can i call u|i call you|i called you|from now i call you)/.test(normalized);
+};
+
+const isInvalidAssistantNameCandidate = (candidate: string): boolean => {
+  const value = sanitizeAssistantName(candidate).toLowerCase();
+  if (!value || value.length < 2) return true;
+  const words = value.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 4) return true;
+
+  const genericOnly = new Set(['with', 'the', 'name', 'that', 'i', 'can', 'provide', 'call', 'you', 'a', 'an', 'any', 'some', 'my']);
+  if (words.every((w) => genericOnly.has(w))) return true;
+  if (/(with the name|name that i can provide|that i can provide|which i can provide|any name|some name|name i can provide)/.test(value)) {
+    return true;
+  }
+  return false;
+};
+
 const extractAssistantRenameCommand = (text: string): string | null => {
   const normalized = String(text || '').trim();
   if (!normalized) return null;
@@ -1796,6 +1826,7 @@ const extractAssistantRenameCommand = (text: string): string | null => {
   if (!match?.[1]) return null;
   const raw = match[1].replace(/\b(ok|okay|please|now)\b.*$/i, '').trim();
   const cleaned = sanitizeAssistantName(raw);
+  if (isInvalidAssistantNameCandidate(cleaned)) return null;
   return cleaned || null;
 };
 
@@ -1922,8 +1953,8 @@ const loadUserProfiles = (): void => {
         preferredTone: profile?.preferredTone,
         prefersConcise: Boolean(profile?.prefersConcise),
         assistantName: sanitizeAssistantName(profile?.assistantName || '') || undefined,
-        emojiStyle: profile?.emojiStyle === 'minimal' ? 'minimal' : 'rich',
-        stickersEnabled: profile?.stickersEnabled !== false,
+        emojiStyle: FORCE_RICH_EMOJI_STYLE ? 'rich' : (profile?.emojiStyle === 'minimal' ? 'minimal' : 'rich'),
+        stickersEnabled: FORCE_STICKERS_ON ? true : (profile?.stickersEnabled !== false),
         recurringTopics: Array.isArray(profile?.recurringTopics) ? profile.recurringTopics.slice(0, 5) : [],
         topicCounts: typeof profile?.topicCounts === 'object' && profile.topicCounts ? profile.topicCounts : {},
         updatedAt: Number(profile?.updatedAt || Date.now())
@@ -1934,12 +1965,42 @@ const loadUserProfiles = (): void => {
   }
 };
 
-const updateUserProfile = (conversationKey: string | undefined, userText: string): UserProfile | undefined => {
-  if (!conversationKey) return undefined;
+const ensurePremiumConversationStyle = (conversationKey: string | undefined): void => {
+  if (!conversationKey) return;
   const current = userProfiles.get(conversationKey) || {
     preferredTone: 'professional' as const,
     emojiStyle: 'rich' as const,
     stickersEnabled: true,
+    recurringTopics: [],
+    topicCounts: {},
+    updatedAt: Date.now()
+  };
+  let changed = false;
+  if (!current.preferredTone) {
+    current.preferredTone = 'professional';
+    changed = true;
+  }
+  if (FORCE_RICH_EMOJI_STYLE && current.emojiStyle !== 'rich') {
+    current.emojiStyle = 'rich';
+    changed = true;
+  }
+  if (FORCE_STICKERS_ON && current.stickersEnabled !== true) {
+    current.stickersEnabled = true;
+    changed = true;
+  }
+  if (changed || !userProfiles.has(conversationKey)) {
+    current.updatedAt = Date.now();
+    userProfiles.set(conversationKey, current);
+    persistUserProfiles();
+  }
+};
+
+const updateUserProfile = (conversationKey: string | undefined, userText: string): UserProfile | undefined => {
+  if (!conversationKey) return undefined;
+  const current = userProfiles.get(conversationKey) || {
+    preferredTone: 'professional' as const,
+    emojiStyle: (FORCE_RICH_EMOJI_STYLE ? 'rich' : 'minimal') as 'rich' | 'minimal',
+    stickersEnabled: FORCE_STICKERS_ON,
     recurringTopics: [],
     topicCounts: {},
     updatedAt: Date.now()
@@ -2023,6 +2084,7 @@ Rules:
 - Prioritize correctness over guessing.
 - Use a professional, calm tone and clean formatting.
 - Give the direct answer first, then concise explanation.
+- Adapt answer length to question complexity: short for simple facts, deeper for analytical prompts.
 - Use short sections or bullets only when they improve clarity.
 - For compare/difference questions, provide point-wise comparison.
 - For coding, provide runnable code and mention key assumptions.
@@ -2051,6 +2113,7 @@ const applyAssistantIdentityPolicy = (text: string, conversationKey?: string): s
 const applyEmojiStylePolicy = (text: string, conversationKey?: string): string => {
   const out = String(text || '').trim();
   if (!out || !conversationKey) return out;
+  if (FORCE_RICH_EMOJI_STYLE) return out;
   const style = userProfiles.get(conversationKey)?.emojiStyle || 'rich';
   if (style !== 'minimal') return out;
   return out
@@ -2146,12 +2209,18 @@ const generateProfessionalReply = async (
   if (commandReply) {
     return commandReply;
   }
+  ensurePremiumConversationStyle(conversationKey);
   const renameTo = extractAssistantRenameCommand(trimmedInput);
   if (renameTo) {
     const appliedName = setAssistantNamePreference(conversationKey, renameTo);
     const confirm = `Done. In this chat, you can call me ${appliedName}.`;
     appendChatHistory(conversationKey, trimmedInput, confirm);
     return confirm;
+  }
+  if (isRenameIntentPrompt(trimmedInput)) {
+    const askName = 'Please tell me the exact name you want to use, for example: "Can I call you Savio?"';
+    appendChatHistory(conversationKey, trimmedInput, askName);
+    return askName;
   }
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
@@ -2399,7 +2468,7 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
       generateProfessionalReply(messageText, chatId, 'telegram:primary'),
       msg.message_id
     );
-    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
+    const stickersEnabled = FORCE_STICKERS_ON || (conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true);
     const stickerId = stickersEnabled ? pickStickerForContext(messageText, response) : '';
     if (stickerId) {
       try {
@@ -2499,7 +2568,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
       }),
       msg.message_id
     );
-    const stickersEnabled = conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true;
+    const stickersEnabled = FORCE_STICKERS_ON || (conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true);
     const stickerId = stickersEnabled ? pickStickerForContext(text, aiReply) : '';
     if (stickerId) {
       try {
