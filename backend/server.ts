@@ -1622,7 +1622,7 @@ const extractAssistantRenameCommand = (text: string): string | null => {
   const normalized = String(text || '').trim();
   if (!normalized) return null;
   const match = normalized.match(
-    /(?:from now (?:on|onwards)\s*,?\s*)?(?:your name is|you are|call yourself|i will call you|can i call you|i call you|from now i call you)\s+([a-zA-Z][a-zA-Z0-9 _-]{1,31})/i
+    /(?:from now (?:on|onwards)\s*,?\s*)?(?:your name is|you are|call yourself|i will call you|can i call you|can i call u|i call you|i called you|from now i call you)\s+([a-zA-Z][a-zA-Z0-9 _-]{1,31})/i
   );
   if (!match?.[1]) return null;
   const raw = match[1].replace(/\b(ok|okay|please|now)\b.*$/i, '').trim();
@@ -1980,7 +1980,7 @@ const generateProfessionalReply = async (
   }
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
-  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what is call you|what i call you)/.test(normalizedPrompt)) {
+  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what is call you|what i call you|what i called you|what did i call you)/.test(normalizedPrompt)) {
     const currentName = getAssistantName(conversationKey);
     const answer = `You can call me ${currentName}. I can help with coding, debugging, setup, deployment, and general questions.`;
     appendChatHistory(conversationKey, trimmedInput, answer);
