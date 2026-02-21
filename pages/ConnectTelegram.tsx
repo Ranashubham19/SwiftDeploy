@@ -151,12 +151,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       const result = await response.json();
 
       if (!result.success) {
-        if (response.status === 402) {
-          setIsDeploying(false);
-          alert('Free plan limit reached. Please upgrade to Pro Fleet to deploy additional bots.');
-          navigate('/billing?cycle=monthly');
-          return;
-        }
         throw new Error(result.error || 'Deployment failed');
       }
 

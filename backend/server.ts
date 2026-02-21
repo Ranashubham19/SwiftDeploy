@@ -198,7 +198,6 @@ const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
     : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-user-profiles.json'));
-const FREE_DEPLOY_LIMIT = 1;
 const FREE_TRIAL_DAYS = 7;
 type PlanType = 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
 type BillingTier = 'STARTER' | 'PRO' | 'ENTERPRISE';
@@ -2678,18 +2677,6 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
     return res.status(400).json({ error: 'Invalid Telegram bot token format' });
   }
 
-  const subscription = ensureUserSubscriptionState(userEmail);
-  const isFreeExpired = subscription.plan === 'FREE' && Date.now() > subscription.freeTrialEndsAt;
-  if (isFreeExpired || (subscription.plan === 'FREE' && subscription.freeDeployCount >= FREE_DEPLOY_LIMIT)) {
-    return res.status(402).json({
-      success: false,
-      error: 'Free limit reached. Upgrade to Pro Fleet to deploy more bots.',
-      plan: subscription.plan,
-      freeDeployCount: subscription.freeDeployCount,
-      freeDeployLimit: FREE_DEPLOY_LIMIT
-    });
-  }
-  
   const fallbackBotId = botToken.split(':')[0] || '';
   const candidateBotId = requestedBotId || fallbackBotId;
   if (!candidateBotId) {
@@ -2758,12 +2745,6 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
     const webhookResult = await (global as any).setWebhookForBot(botToken, botId);
     
     if (webhookResult.success) {
-      if (subscription.plan === 'FREE') {
-        userSubscriptionState.set(userEmail, {
-          ...subscription,
-          freeDeployCount: subscription.freeDeployCount + 1
-        });
-      }
       persistBotState();
       console.log(`[DEPLOY] Successfully deployed bot ${botId}`);
       res.json({
@@ -2836,18 +2817,6 @@ app.post('/deploy-discord-bot', requireAuth, deployRateLimit, async (req, res) =
     return res.status(403).json({ success: false, error: 'Bot ID already belongs to another account' });
   }
 
-  const subscription = ensureUserSubscriptionState(userEmail);
-  const isFreeExpired = subscription.plan === 'FREE' && Date.now() > subscription.freeTrialEndsAt;
-  if (isFreeExpired || (subscription.plan === 'FREE' && subscription.freeDeployCount >= FREE_DEPLOY_LIMIT)) {
-    return res.status(402).json({
-      success: false,
-      error: 'Free limit reached. Upgrade to Pro Fleet to deploy more bots.',
-      plan: subscription.plan,
-      freeDeployCount: subscription.freeDeployCount,
-      freeDeployLimit: FREE_DEPLOY_LIMIT
-    });
-  }
-
   try {
     const aiConfig = getActiveAiConfig();
     const meResponse = await fetch('https://discord.com/api/v10/users/@me', {
@@ -2914,13 +2883,6 @@ app.post('/deploy-discord-bot', requireAuth, deployRateLimit, async (req, res) =
       createdAt: new Date().toISOString()
     });
     persistBotState();
-
-    if (subscription.plan === 'FREE') {
-      userSubscriptionState.set(userEmail, {
-        ...subscription,
-        freeDeployCount: subscription.freeDeployCount + 1
-      });
-    }
 
     const interactionUrl = `${BASE_URL}/discord/interactions/${botId}`;
     const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${applicationId}&permissions=274877975552&scope=bot%20applications.commands`;
@@ -3663,7 +3625,7 @@ app.get('/plan/status', requireAuth, (req, res) => {
     plan: subscription.plan,
     isSubscribed: subscription.isSubscribed,
     freeDeployCount: subscription.freeDeployCount,
-    freeDeployLimit: FREE_DEPLOY_LIMIT,
+    freeDeployLimit: null,
     freeTrialEndsAt: new Date(subscription.freeTrialEndsAt).toISOString()
   });
 });
