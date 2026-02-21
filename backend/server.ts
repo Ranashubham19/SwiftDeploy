@@ -847,7 +847,13 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|algorithm|leetcode)/.test(lower)) {
     return 'Yes, I can help with coding. Send the exact problem statement and preferred language, and I will provide a correct solution with explanation.';
   }
-  return 'I am ready to help. Ask your question directly, and I will give you a clear professional answer.';
+  if (/(snape|severus)/.test(lower)) {
+    return 'Severus Snape is a key character in the Harry Potter series: a Hogwarts professor, former Death Eater, and ultimately a double agent who protected Harry.';
+  }
+  if (/(your real name|real name|official name)/.test(lower)) {
+    return 'My official name is set by your Telegram bot profile.';
+  }
+  return `I could not generate a reliable answer for "${text.slice(0, 80)}" right now. Please rephrase it in one clear line and I will answer directly.`;
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -1458,7 +1464,9 @@ const enforceProfessionalReplyQuality = (prompt: string, reply: string, conversa
       return `Done. In this chat, you can call me ${applied}.`;
     }
   }
-  return 'I am ready to help. Ask your question directly, and I will give you a clear, professional answer.';
+  const instant = instantProfessionalReply(prompt);
+  if (instant && !isLowValueDeflectionReply(instant)) return instant;
+  return generateEmergencyReply(prompt);
 };
 
 const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
@@ -2021,7 +2029,7 @@ const generateProfessionalReply = async (
   }
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
-  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what is call you|what i call you|what i called you|what did i call you)/.test(normalizedPrompt)) {
+  if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|your real name|real name|official name|what (should|can|do) i call you|what is call you|what i call you|what i called you|what did i call you)/.test(normalizedPrompt)) {
     const officialName = getOfficialAssistantName(conversationKey);
     const alias = sanitizeAssistantName(userProfiles.get(conversationKey || '')?.assistantName || '');
     const aliasLine = alias ? ` In this chat, you can also call me ${alias}.` : '';
