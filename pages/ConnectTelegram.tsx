@@ -111,6 +111,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         if (!active || !response.ok || !data?.success) return;
         setRemainingCreditUsd(Number(data.remainingUsd || 0));
         setIsOutOfCredit(Boolean(data.depleted));
+        setCreditWarning(String(data.warning || ''));
         const credited = Number(data.creditedUsd || 0);
         if (credited > 0) {
           setCreditNotice(`Credit recharged successfully: +$${credited}`);

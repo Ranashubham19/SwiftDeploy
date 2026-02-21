@@ -377,11 +377,13 @@ const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditSta
   return state;
 };
 
-const addCreditToBot = (botId: string, amountUsd: number): BotCreditState => {
-  const state = applyCreditDecay(botId);
+const addCreditToBot = (botId: string, amountUsd: number, now: number = Date.now()): BotCreditState => {
+  const state = applyCreditDecay(botId, now);
   state.remainingUsd = Math.max(0, state.remainingUsd + Math.max(0, Math.floor(amountUsd)));
+  // Restart deduction window from recharge time.
+  state.lastChargedAt = now;
   state.depleted = state.remainingUsd <= 0;
-  state.updatedAt = Date.now();
+  state.updatedAt = now;
   botCredits.set(botId, state);
   return state;
 };
@@ -4109,7 +4111,15 @@ app.post('/billing/confirm-credit-session', async (req, res) => {
   }
   if (processedCreditSessions.has(sessionId)) {
     const credit = applyCreditDecay(botId);
-    return res.json({ success: true, botId, remainingUsd: credit.remainingUsd, alreadyProcessed: true });
+    return res.json({
+      success: true,
+      botId,
+      remainingUsd: credit.remainingUsd,
+      depleted: credit.depleted,
+      creditLastChargedAt: credit.lastChargedAt,
+      warning: credit.depleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : '',
+      alreadyProcessed: true
+    });
   }
 
   const hasBot = botTokens.has(botId) || Boolean(getPersistedTelegramOwner(botId));
@@ -4154,7 +4164,9 @@ app.post('/billing/confirm-credit-session', async (req, res) => {
       botId,
       creditedUsd: amountUsd,
       remainingUsd: updated.remainingUsd,
-      depleted: updated.depleted
+      depleted: updated.depleted,
+      creditLastChargedAt: updated.lastChargedAt,
+      warning: updated.depleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : ''
     });
   } catch {
     return res.status(500).json({ success: false, message: 'Failed to confirm credit purchase.' });
