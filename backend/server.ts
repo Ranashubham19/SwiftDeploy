@@ -1760,15 +1760,15 @@ const getOfficialAssistantName = (conversationKey?: string): string => {
 
 const getAssistantName = (conversationKey?: string): string => {
   if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
-  const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
-  const telegramBotId = String(tgMatch?.[1] || '').trim();
-  if (telegramBotId) {
-    // Telegram real identity should stay the BotFather name/username.
-    return getOfficialAssistantName(conversationKey);
-  }
   const profile = userProfiles.get(conversationKey);
   const preferred = sanitizeAssistantName(profile?.assistantName || '');
   if (preferred) return preferred;
+  const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
+  const telegramBotId = String(tgMatch?.[1] || '').trim();
+  if (telegramBotId) {
+    // Default to registered Telegram bot identity when no per-chat rename exists.
+    return getOfficialAssistantName(conversationKey);
+  }
   return DEFAULT_ASSISTANT_NAME;
 };
 
