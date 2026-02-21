@@ -673,7 +673,7 @@ export const generateBotResponse = async (
     const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
     const explicitProvider = (runtimeConfig?.provider || process.env.AI_PROVIDER || '').trim().toLowerCase();
     const runtimeModel = (runtimeConfig?.model || '').trim();
-    const forceProvider = Boolean(runtimeConfig?.forceProvider ?? runtimeConfig?.provider);
+    const forceProvider = runtimeConfig?.forceProvider === true;
     const preferOpenAI = CHATGPT_52_MODE && hasOpenAI;
     const preferredProvider =
       explicitProvider
