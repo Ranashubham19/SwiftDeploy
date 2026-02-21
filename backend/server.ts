@@ -3408,6 +3408,47 @@ app.get('/bot-credit/:botId', requireAuth, (req, res) => {
   });
 });
 
+app.get('/bot-profile/:botId', requireAuth, async (req, res) => {
+  const botId = String(req.params.botId || '').trim();
+  const reqUser = req.user as Express.User | undefined;
+  const userEmail = (reqUser?.email || '').trim().toLowerCase();
+  const owner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
+  if (!botId) {
+    return res.status(400).json({ success: false, message: 'botId is required' });
+  }
+  if (!owner || !userEmail || owner !== userEmail) {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+
+  let botUsername = String(telegramBotUsernames.get(botId) || '').trim();
+  let botName = String(telegramBotNames.get(botId) || '').trim();
+  const token = String(botTokens.get(botId) || '').trim();
+
+  // Refresh profile from Telegram when possible to avoid generic fallback names.
+  if (token) {
+    try {
+      const verifyResponse = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const verifyData: any = await verifyResponse.json().catch(() => ({}));
+      if (verifyData?.ok) {
+        botUsername = String(verifyData?.result?.username || botUsername || '').trim();
+        botName = String(verifyData?.result?.first_name || botName || '').trim();
+        if (botUsername) telegramBotUsernames.set(botId, botUsername);
+        if (botName) telegramBotNames.set(botId, botName);
+        persistBotState();
+      }
+    } catch {
+      // Fallback to persisted/in-memory values.
+    }
+  }
+
+  return res.json({
+    success: true,
+    botId,
+    botUsername: botUsername || null,
+    botName: botName || null
+  });
+});
+
 /**
  * Email Verification Routes
  */

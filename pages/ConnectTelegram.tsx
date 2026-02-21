@@ -13,6 +13,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const location = useLocation();
   const urlParams = new URLSearchParams(location.search);
   const stage = urlParams.get('stage') || '';
+  const stageView = urlParams.get('view') || '';
+  const isExistingView = stageView === 'existing';
   const isSuccessStage = stage === 'success';
   const isSubscribeStage = stage === 'subscribe';
   const stageBotUsername = urlParams.get('bot') || '';
@@ -103,6 +105,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
       const params = new URLSearchParams();
       params.set('stage', 'success');
+      params.set('view', 'existing');
       params.set('botId', existingBot.id);
       const username =
         existingBot.telegramUsername ||
@@ -128,6 +131,29 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     if (stageBotId) setConnectedBotId(stageBotId);
     if (stageBotLink) setConnectedBotLink(stageBotLink);
   }, [isSuccessStage, stageBotUsername, stageBotName, stageBotId, stageBotLink]);
+
+  useEffect(() => {
+    if (!isSuccessStage || !stageBotId) return;
+    let active = true;
+    const loadBotProfile = async () => {
+      try {
+        const response = await fetch(apiUrl(`/bot-profile/${encodeURIComponent(stageBotId)}`), {
+          credentials: 'include'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!active || !response.ok || !data?.success) return;
+        const name = String(data.botName || '').trim();
+        const username = String(data.botUsername || '').trim();
+        if (name) setConnectedBotName(name);
+        if (username) setConnectedBotUsername(username);
+        if (!connectedBotLink && username) setConnectedBotLink(`https://t.me/${username}`);
+      } catch {}
+    };
+    loadBotProfile();
+    return () => {
+      active = false;
+    };
+  }, [isSuccessStage, stageBotId, connectedBotLink]);
 
   useEffect(() => {
     if (!isSuccessStage || !stageBotId) return;
@@ -485,10 +511,18 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           </div>
 
           <div>
-            <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">Deployment success!</h2>
-            <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
-              Your token has been connected. Telegram bot identity is managed by BotFather.
-            </p>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight bg-gradient-to-r from-cyan-200 via-sky-200 to-emerald-200 bg-clip-text text-transparent">
+              {isExistingView ? 'Live Bot Command Center' : 'Deployment success!'}
+            </h2>
+            {!isExistingView ? (
+              <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
+                Your token has been connected. Telegram bot identity is managed by BotFather.
+              </p>
+            ) : (
+              <p className="text-zinc-300 mt-2 max-w-xl mx-auto font-medium">
+                Your production bot is already active and running. Credits, recharge, and uptime controls are ready below.
+              </p>
+            )}
             {connectedBotName || connectedBotUsername ? (
               <p className="text-zinc-200 mt-2">
                 Connected bot: <span className="font-black">{connectedBotName || `@${connectedBotUsername}`}</span>
