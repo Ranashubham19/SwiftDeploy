@@ -158,7 +158,7 @@ const CHAT_HISTORY_MAX_TURNS = parseInt(process.env.CHAT_HISTORY_MAX_TURNS || '1
 const CHAT_HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = parseInt(process.env.AI_CACHE_MAX_ENTRIES || '800', 10);
-const RESPONSE_STYLE_VERSION = 'pro_layout_v5_reliable_fallback';
+const RESPONSE_STYLE_VERSION = 'pro_layout_v6_pointwise';
 const MAX_USER_PROMPT_LENGTH = parseInt(process.env.MAX_USER_PROMPT_LENGTH || '6000', 10);
 const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -587,7 +587,7 @@ const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
 
 const app = express();
 const startedAtIso = new Date().toISOString();
-const BOT_LOGIC_VERSION = 'context_guard_v4_2026-02-22';
+const BOT_LOGIC_VERSION = 'context_guard_v5_2026-02-22';
 if (isProduction) {
   app.set('trust proxy', 1);
 }
@@ -2711,6 +2711,7 @@ Rules:
 - Prioritize correctness over guessing.
 - Use a professional, calm tone and clean formatting.
 - Give the direct answer first, then a deep explanation.
+- For explanatory prompts (who/what/why/how/describe), use a point-wise structure by default.
 - Default to rich, high-quality depth (typically 2-4 strong paragraphs) unless the user explicitly asks for a short reply.
 - Use short sections or bullets only when they improve clarity.
 - For compare/difference questions, provide point-wise comparison.
