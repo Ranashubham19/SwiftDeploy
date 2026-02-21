@@ -99,6 +99,7 @@ type BotCreditState = {
   lastChargedAt: number;
   depleted: boolean;
   updatedAt: number;
+  policyVersion: number;
 };
 const botCredits = new Map<string, BotCreditState>();
 // Credit policy (locked by product requirement):
@@ -107,6 +108,7 @@ const botCredits = new Map<string, BotCreditState>();
 const INITIAL_BOT_CREDIT_USD = 10;
 const CREDIT_DEDUCT_INTERVAL_MS = 36 * 60 * 60 * 1000;
 const CREDIT_DEDUCT_AMOUNT_USD = 1;
+const BOT_CREDIT_POLICY_VERSION = 2;
 const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'true').trim().toLowerCase() === 'true';
 const CREDIT_ENFORCEMENT_PAUSED = (process.env.BOT_CREDIT_ENFORCEMENT_PAUSED || 'false').trim().toLowerCase() !== 'false';
 const CREDIT_ENFORCEMENT_ACTIVE = CREDIT_ENFORCEMENT_ENABLED && !CREDIT_ENFORCEMENT_PAUSED;
@@ -122,6 +124,7 @@ type TelegramBotConfig = {
   creditRemainingUsd?: number;
   creditLastChargedAt?: number;
   creditDepleted?: boolean;
+  creditPolicyVersion?: number;
   createdAt: string;
 };
 type PersistedBotState = {
@@ -425,12 +428,24 @@ const recordBotError = (botId: string, error: unknown): void => {
 
 const ensureBotCreditState = (botId: string): BotCreditState => {
   const existing = botCredits.get(botId);
-  if (existing) return existing;
+  if (existing) {
+    if (!existing.policyVersion || existing.policyVersion < BOT_CREDIT_POLICY_VERSION) {
+      existing.remainingUsd = INITIAL_BOT_CREDIT_USD;
+      existing.lastChargedAt = Date.now();
+      existing.depleted = false;
+      existing.updatedAt = Date.now();
+      existing.policyVersion = BOT_CREDIT_POLICY_VERSION;
+      botCredits.set(botId, existing);
+      persistBotState();
+    }
+    return existing;
+  }
   const fresh: BotCreditState = {
     remainingUsd: INITIAL_BOT_CREDIT_USD,
     lastChargedAt: Date.now(),
     depleted: false,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    policyVersion: BOT_CREDIT_POLICY_VERSION
   };
   botCredits.set(botId, fresh);
   return fresh;
@@ -442,6 +457,7 @@ const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditSta
     // Paused mode: no deduction and no depletion lock.
     state.depleted = false;
     state.updatedAt = now;
+    state.policyVersion = BOT_CREDIT_POLICY_VERSION;
     botCredits.set(botId, state);
     return state;
   }
@@ -449,6 +465,7 @@ const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditSta
     state.remainingUsd = 0;
     state.depleted = true;
     state.updatedAt = now;
+    state.policyVersion = BOT_CREDIT_POLICY_VERSION;
     botCredits.set(botId, state);
     return state;
   }
@@ -460,6 +477,7 @@ const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditSta
   state.lastChargedAt += steps * CREDIT_DEDUCT_INTERVAL_MS;
   state.depleted = state.remainingUsd <= 0;
   state.updatedAt = now;
+  state.policyVersion = BOT_CREDIT_POLICY_VERSION;
   botCredits.set(botId, state);
   return state;
 };
@@ -471,6 +489,7 @@ const addCreditToBot = (botId: string, amountUsd: number, now: number = Date.now
   state.lastChargedAt = now;
   state.depleted = state.remainingUsd <= 0;
   state.updatedAt = now;
+  state.policyVersion = BOT_CREDIT_POLICY_VERSION;
   botCredits.set(botId, state);
   return state;
 };
@@ -496,6 +515,7 @@ const persistBotState = (): void => {
       creditRemainingUsd: credit.remainingUsd,
       creditLastChargedAt: credit.lastChargedAt,
       creditDepleted: credit.depleted,
+      creditPolicyVersion: credit.policyVersion,
       createdAt: new Date().toISOString()
     };
   });
@@ -1195,7 +1215,8 @@ const restorePersistedBots = async (): Promise<void> => {
       remainingUsd: Math.max(0, Number(tg.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
       lastChargedAt: Math.max(0, Number(tg.creditLastChargedAt ?? Date.now())),
       depleted: Boolean(tg.creditDepleted) || Number(tg.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD) <= 0,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      policyVersion: Math.max(1, Number(tg.creditPolicyVersion || 1))
     });
     applyCreditDecay(botId);
     if (tg.ownerEmail) {
@@ -2812,7 +2833,8 @@ app.post('/webhook/:botId', (req, res) => {
         remainingUsd: Math.max(0, Number(match.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
         lastChargedAt: Math.max(0, Number(match.creditLastChargedAt ?? Date.now())),
         depleted: Boolean(match.creditDepleted) || Number(match.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD) <= 0,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        policyVersion: Math.max(1, Number(match.creditPolicyVersion || 1))
       });
       applyCreditDecay(match.botId);
       if (match.ownerEmail) {
@@ -3025,7 +3047,8 @@ const deployTelegramBotForUser = async (args: DeployTelegramBotArgs): Promise<De
     remainingUsd: INITIAL_BOT_CREDIT_USD,
     lastChargedAt: Date.now(),
     depleted: false,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    policyVersion: BOT_CREDIT_POLICY_VERSION
   });
   ensureBotTelemetry(botId, 'TELEGRAM', userEmail);
 

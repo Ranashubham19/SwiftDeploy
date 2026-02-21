@@ -16,6 +16,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const isSuccessStage = stage === 'success';
   const isSubscribeStage = stage === 'subscribe';
   const stageBotUsername = urlParams.get('bot') || '';
+  const stageBotName = urlParams.get('botName') || '';
   const stageBotId = urlParams.get('botId') || '';
   const stageCreditStatus = urlParams.get('credit') || '';
   const stageSubscribeStatus = urlParams.get('subscribe') || '';
@@ -35,6 +36,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [deployError, setDeployError] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
   const [connectedBotUsername, setConnectedBotUsername] = useState(stageBotUsername);
+  const [connectedBotName, setConnectedBotName] = useState(stageBotName);
   const [connectedBotId, setConnectedBotId] = useState(stageBotId);
   const [connectedBotLink, setConnectedBotLink] = useState(stageBotLink);
   const [connectedAiProvider, setConnectedAiProvider] = useState('');
@@ -106,6 +108,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         existingBot.telegramUsername ||
         (existingBot.name?.startsWith('@') ? existingBot.name.slice(1) : '');
       if (username) params.set('bot', username);
+      const existingName = String(existingBot.name || '').trim();
+      if (existingName) params.set('botName', existingName);
       navigate(`/connect/telegram?${params.toString()}`, { replace: true, state: location.state });
     };
 
@@ -120,9 +124,10 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     if (!isSuccessStage) return;
     setFlowStep('success');
     if (stageBotUsername) setConnectedBotUsername(stageBotUsername);
+    if (stageBotName) setConnectedBotName(stageBotName);
     if (stageBotId) setConnectedBotId(stageBotId);
     if (stageBotLink) setConnectedBotLink(stageBotLink);
-  }, [isSuccessStage, stageBotUsername, stageBotId, stageBotLink]);
+  }, [isSuccessStage, stageBotUsername, stageBotName, stageBotId, stageBotLink]);
 
   useEffect(() => {
     if (!isSuccessStage || !stageBotId) return;
@@ -201,6 +206,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setBots([newBot, ...bots]);
     setConnectedBotId(botId);
     setConnectedBotUsername(botUsername);
+    setConnectedBotName(botName);
     setConnectedBotLink(telegramLink);
     setConnectedAiProvider(String(result.aiProvider || ''));
     setConnectedAiModel(String(result.aiModel || ''));
@@ -217,6 +223,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       const params = new URLSearchParams();
       params.set('stage', 'success');
       if (botUsername) params.set('bot', botUsername);
+      if (botName) params.set('botName', botName);
       if (botId) params.set('botId', botId);
       navigate(`/connect/telegram?${params.toString()}`, { replace: true, state: location.state });
       return;
@@ -369,6 +376,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     const params = new URLSearchParams();
     params.set('stage', 'success');
     if (connectedBotUsername) params.set('bot', connectedBotUsername);
+    if (connectedBotName) params.set('botName', connectedBotName);
     if (connectedBotId) params.set('botId', connectedBotId);
     const query = `?${params.toString()}`;
     navigate(`/connect/telegram${query}`, { replace: true });
@@ -481,9 +489,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
               Your token has been connected. Telegram bot identity is managed by BotFather.
             </p>
-            {connectedBotUsername ? (
+            {connectedBotName || connectedBotUsername ? (
               <p className="text-zinc-200 mt-2">
-                Connected bot: <span className="font-black">@{connectedBotUsername}</span>
+                Connected bot: <span className="font-black">{connectedBotName || `@${connectedBotUsername}`}</span>
               </p>
             ) : null}
           </div>
