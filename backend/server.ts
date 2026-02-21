@@ -1373,6 +1373,21 @@ const expandInlinePointMarkers = (text: string): string => {
     out = splitMarkers(out, /(\d+\))\s+/g);
     out = splitMarkers(out, /(\d+\.)\s+/g);
 
+    // Handle one-line dash-separated point lists:
+    // "A - B - C" => "A\n- B\n- C" (only when pattern looks like headings/items, not numeric ranges)
+    const inlineDashMatches = out.match(/\s[-\u2013]\s(?=[A-Z(])/g) || [];
+    if (!out.includes('\n') && inlineDashMatches.length >= 2) {
+      const parts = out
+        .split(/\s[-\u2013]\s(?=[A-Z(])/g)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (parts.length >= 3) {
+        const lead = parts[0];
+        const bullets = parts.slice(1).map((item) => `- ${item}`);
+        out = `${lead}\n${bullets.join('\n')}`;
+      }
+    }
+
     return out
       .replace(/\n{3,}/g, '\n\n')
       .replace(/[ \t]+\n/g, '\n')
@@ -1403,13 +1418,27 @@ const enforceStructuredPoints = (prompt: string, text: string): string => {
   if (!isPointWisePrompt(prompt)) return value;
   if (/\n\s*(-|\*|\u2022|\d+[.)])\s+/.test(value)) return value;
 
+  const dashParts = value
+    .split(/\s[-\u2013]\s(?=[A-Z(])/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (dashParts.length >= 3) {
+    const lead = dashParts[0];
+    const maxItems = isComparisonPrompt(prompt) ? 6 : 8;
+    const items = dashParts
+      .slice(1, 1 + maxItems)
+      .map((item, i) => `${i + 1}. ${item.replace(/^[-*\u2022]\s+/, '').trim()}`);
+    const label = isComparisonPrompt(prompt) ? 'Comparison Points' : 'Key Points';
+    return `${lead}\n\n${label}:\n${items.join('\n\n')}`.trim();
+  }
+
   const sentences = toSentenceChunks(value);
   if (sentences.length < 2) return value;
   const lead = sentences[0];
   const maxItems = isComparisonPrompt(prompt) ? 5 : 4;
   const items = sentences.slice(1, 1 + maxItems).map((s, i) => `${i + 1}. ${s}`);
   const label = isComparisonPrompt(prompt) ? 'Comparison Points' : 'Key Points';
-  return `${lead}\n\n${label}:\n${items.join('\n')}`.trim();
+  return `${lead}\n\n${label}:\n${items.join('\n\n')}`.trim();
 };
 
 const formatProfessionalResponse = (text: string, prompt: string): string => {
@@ -1481,7 +1510,7 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
   const hasStructuredPointLines = /\n\s*(-|\*|\u2022|\d+[.)])\s+/.test(cleaned);
 
   // Never truncate short prompts to one sentence when structured points are present.
-  if (isSimplePrompt(prompt) && !hasStructuredPointLines) {
+  if (isSimplePrompt(prompt) && !hasStructuredPointLines && !isPointWisePrompt(prompt)) {
     const simpleSentences = toSentenceChunks(cleaned);
     if (simpleSentences.length > 0 && simpleSentences.length <= 3) {
       return simpleSentences.join(' ');
