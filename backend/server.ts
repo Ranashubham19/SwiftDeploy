@@ -1431,6 +1431,31 @@ const isAcceptableShortAnswer = (answer: string, prompt: string): boolean => {
   return /(pi|euler|prime|capital|value|definition|meaning|date|year|population)/i.test(prompt);
 };
 
+const isLowValueDeflectionReply = (text: string): boolean => {
+  const v = String(text || '').toLowerCase().trim();
+  if (!v) return true;
+  return /(i can help with this\.?\s*share one clear question|share one clear question or goal|direct professional answer)/.test(v);
+};
+
+const enforceProfessionalReplyQuality = (prompt: string, reply: string, conversationKey?: string): string => {
+  const candidate = String(reply || '').trim();
+  if (!candidate) return generateEmergencyReply(prompt);
+  if (!isLowValueDeflectionReply(candidate)) return candidate;
+
+  const q = String(prompt || '').toLowerCase().replace(/\s+/g, ' ');
+  if (/(what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what i called you|what did i call you)/.test(q)) {
+    return `You can call me ${getAssistantName(conversationKey)}.`;
+  }
+  if (/(can i call you|i will call you|from now i call you|your name is|you are)/.test(q)) {
+    const renameTo = extractAssistantRenameCommand(prompt);
+    if (renameTo) {
+      const applied = setAssistantNamePreference(conversationKey, renameTo);
+      return `Done. In this chat, you can call me ${applied}.`;
+    }
+  }
+  return 'I am ready to help. Ask your question directly, and I will give you a clear, professional answer.';
+};
+
 const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
@@ -2008,7 +2033,10 @@ const generateProfessionalReply = async (
   const cacheKey = `${cacheScope}:${normalizedPrompt}`;
   const cached = timeSensitive ? undefined : aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.text;
+    const vettedCached = enforceProfessionalReplyQuality(trimmedInput, cached.text, conversationKey);
+    if (!isLowValueDeflectionReply(vettedCached)) {
+      return vettedCached;
+    }
   }
   if (cached) {
     aiResponseCache.delete(cacheKey);
@@ -2050,10 +2078,12 @@ const generateProfessionalReply = async (
         polished,
         trimmedInput
       );
+      clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
       clean = applyAssistantIdentityPolicy(clean, conversationKey);
       clean = applyEmojiStylePolicy(clean, conversationKey);
       if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, trimmedInput))) {
         clean = instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput);
+        clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
         clean = applyEmojiStylePolicy(clean, conversationKey);
       }
@@ -2086,6 +2116,7 @@ const generateProfessionalReply = async (
           retryPolished,
           trimmedInput
         );
+        retryClean = enforceProfessionalReplyQuality(trimmedInput, retryClean, conversationKey);
         retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
         retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
@@ -2093,6 +2124,7 @@ const generateProfessionalReply = async (
             formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
             trimmedInput
           );
+          retryClean = enforceProfessionalReplyQuality(trimmedInput, retryClean, conversationKey);
           retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
           retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
         }
@@ -2117,6 +2149,7 @@ const generateProfessionalReply = async (
           formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
           trimmedInput
         );
+        clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
         clean = applyAssistantIdentityPolicy(clean, conversationKey);
         clean = applyEmojiStylePolicy(clean, conversationKey);
       }
@@ -2150,10 +2183,10 @@ const generateProfessionalReply = async (
           'Fallback AI response timeout'
         );
         const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
-        const clean = applyEmojiStylePolicy(applyAssistantIdentityPolicy(ensureEmojiInReply(
-          fallbackPolished,
-          trimmedInput
-        ), conversationKey), conversationKey);
+        let clean = ensureEmojiInReply(fallbackPolished, trimmedInput);
+        clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
+        clean = applyAssistantIdentityPolicy(clean, conversationKey);
+        clean = applyEmojiStylePolicy(clean, conversationKey);
         appendChatHistory(conversationKey, trimmedInput, clean);
         if (!timeSensitive) {
           aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
