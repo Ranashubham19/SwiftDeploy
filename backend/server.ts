@@ -214,14 +214,15 @@ const SUBSCRIPTION_STATE_FILE = (process.env.SUBSCRIPTION_STATE_FILE || '').trim
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-subscriptions.json')
     : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-subscriptions.json'));
-const TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS = Math.max(100, parseInt(process.env.TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS || '3900', 10));
+const TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS = Math.max(100, parseInt(process.env.TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS || '2900', 10));
 const TELEGRAM_SUBSCRIPTION_INTERVAL = (process.env.TELEGRAM_SUBSCRIPTION_INTERVAL || 'month').trim().toLowerCase() === 'year' ? 'year' : 'month';
-const TELEGRAM_SUBSCRIPTION_LABEL = (process.env.TELEGRAM_SUBSCRIPTION_LABEL || 'SwiftDeploy Telegram Subscription').trim() || 'SwiftDeploy Telegram Subscription';
-const TELEGRAM_SUBSCRIPTION_DESCRIPTION = (process.env.TELEGRAM_SUBSCRIPTION_DESCRIPTION || 'Activate and run your Telegram AI bot with SwiftDeploy.').trim();
+const TELEGRAM_SUBSCRIPTION_LABEL = (process.env.TELEGRAM_SUBSCRIPTION_LABEL || 'SwiftDeploy').trim() || 'SwiftDeploy';
+const TELEGRAM_SUBSCRIPTION_DESCRIPTION = (process.env.TELEGRAM_SUBSCRIPTION_DESCRIPTION || 'SwiftDeploy Pro Plan').trim();
 type PendingTelegramDeployIntent = {
   intentId: string;
   userEmail: string;
-  selectedModel?: string;
+  botToken: string;
+  selectedModel: string;
   createdAt: number;
 };
 const pendingTelegramDeployIntents = new Map<string, PendingTelegramDeployIntent>();
@@ -4071,9 +4072,37 @@ app.post('/billing/create-telegram-subscription-session', requireAuth, billingRa
     return res.json({ success: true, subscriptionRequired: false });
   }
 
+  const botToken = typeof req.body?.botToken === 'string' ? req.body.botToken.trim() : '';
   const selectedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+  if (!botToken) {
+    return res.status(400).json({ success: false, message: 'Bot token is required' });
+  }
+  if (!/^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(botToken)) {
+    return res.status(400).json({ success: false, message: 'Invalid Telegram bot token format' });
+  }
 
   purgeExpiredTelegramDeployIntents();
+
+  // Validate token before charging.
+  const verifyResponse = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+  const verifyData: any = await verifyResponse.json().catch(() => ({}));
+  if (!verifyData?.ok) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid Telegram token',
+      details: verifyData?.description || 'Telegram token validation failed'
+    });
+  }
+  const botUsername = String(verifyData?.result?.username || '').trim();
+  const botName = String(verifyData?.result?.first_name || '').trim();
+  const telegramBotId = String(verifyData?.result?.id || '').trim();
+  if (!botUsername) {
+    return res.status(400).json({
+      success: false,
+      message: 'Telegram bot username missing',
+      details: 'Create bot via @BotFather first, then use its token here.'
+    });
+  }
 
   const stripeSecretKey = getStripeSecretKey();
   if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
@@ -4084,7 +4113,8 @@ app.post('/billing/create-telegram-subscription-session', requireAuth, billingRa
   pendingTelegramDeployIntents.set(intentId, {
     intentId,
     userEmail,
-    selectedModel: selectedModel || undefined,
+    botToken,
+    selectedModel,
     createdAt: Date.now()
   });
 
@@ -4103,6 +4133,9 @@ app.post('/billing/create-telegram-subscription-session', requireAuth, billingRa
     params.set('metadata[purchase_type]', 'telegram_subscription');
     params.set('metadata[user_email]', userEmail);
     params.set('metadata[intent_id]', intentId);
+    if (telegramBotId) {
+      params.set('metadata[telegram_bot_id]', telegramBotId);
+    }
     params.set('line_items[0][price_data][currency]', 'usd');
     params.set('line_items[0][price_data][unit_amount]', String(TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS));
     params.set('line_items[0][price_data][recurring][interval]', TELEGRAM_SUBSCRIPTION_INTERVAL);
@@ -4132,7 +4165,9 @@ app.post('/billing/create-telegram-subscription-session', requireAuth, billingRa
       subscriptionRequired: true,
       amountUsd: Math.round(TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS / 100),
       checkoutUrl: stripeData.url,
-      intentId
+      intentId,
+      botUsername,
+      botName: botName || null
     });
   } catch (error) {
     pendingTelegramDeployIntents.delete(intentId);
@@ -4163,10 +4198,11 @@ app.post('/billing/confirm-telegram-subscription-session', requireAuth, billingR
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
     return res.json({
+      ...(previous.deployPayload || {}),
       success: true,
       alreadyProcessed: true,
       subscribed: true,
-      deployed: false
+      deployed: Boolean(previous.deployed)
     });
   }
 
@@ -4217,19 +4253,42 @@ app.post('/billing/confirm-telegram-subscription-session', requireAuth, billingR
       processedAt: Date.now()
     });
 
-    // Activate subscription after successful checkout; deployment happens separately from connect flow.
+    // Mark subscription active before deployment so the user can retry deploy without paying again.
     setUserPlan(userEmail, 'PRO_MONTHLY');
+
+    const deployPayload = await deployTelegramBotForUser({
+      botToken: intent.botToken,
+      requestedBotId: '',
+      selectedModel: intent.selectedModel,
+      userEmail
+    });
+
+    processedTelegramSubscriptionSessions.set(sessionId, {
+      intentId,
+      userEmail,
+      deployed: true,
+      processedAt: Date.now(),
+      deployPayload
+    });
     pendingTelegramDeployIntents.delete(intentId);
 
     return res.json({
-      success: true,
-      subscribed: true,
-      deployed: false
+      ...deployPayload,
+      subscribed: true
     });
   } catch (error: any) {
+    // Keep subscription active even if deployment fails.
+    setUserPlan(userEmail, 'PRO_MONTHLY');
+    pendingTelegramDeployIntents.delete(intentId);
+    const status = typeof error?.status === 'number' ? error.status : 500;
+    const body = error?.body;
+    if (body) {
+      return res.status(status).json({ ...body, subscribed: true });
+    }
     return res.status(500).json({
       success: false,
-      message: 'Failed to confirm subscription.',
+      subscribed: true,
+      message: 'Failed to confirm subscription or deploy bot.',
       details: error instanceof Error ? error.message : String(error || 'Unknown error')
     });
   }
