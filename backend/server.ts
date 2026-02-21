@@ -102,6 +102,7 @@ const botCredits = new Map<string, BotCreditState>();
 const INITIAL_BOT_CREDIT_USD = Math.max(1, parseInt(process.env.BOT_INITIAL_CREDIT_USD || '10', 10));
 const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '120000', 10));
 const CREDIT_DEDUCT_AMOUNT_USD = Math.max(1, parseInt(process.env.BOT_CREDIT_DEDUCT_AMOUNT_USD || '1', 10));
+const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'false').trim().toLowerCase() === 'true';
 const processedCreditSessions = new Set<string>();
 type TelegramBotConfig = {
   botId: string;
@@ -329,6 +330,13 @@ const ensureBotCreditState = (botId: string): BotCreditState => {
 
 const applyCreditDecay = (botId: string, now: number = Date.now()): BotCreditState => {
   const state = ensureBotCreditState(botId);
+  if (!CREDIT_ENFORCEMENT_ENABLED) {
+    // Paused mode: no deduction and no depletion lock.
+    state.depleted = false;
+    state.updatedAt = now;
+    botCredits.set(botId, state);
+    return state;
+  }
   if (state.depleted || state.remainingUsd <= 0) {
     state.remainingUsd = 0;
     state.depleted = true;
@@ -2183,7 +2191,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   const botId = getBotIdByTelegramToken(botToken);
 
   if (!text) return;
-  if (botId) {
+  if (botId && CREDIT_ENFORCEMENT_ENABLED) {
     const credit = applyCreditDecay(botId);
     if (credit.depleted || credit.remainingUsd <= 0) {
       const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
@@ -2191,7 +2199,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
       await sendTelegramReply(
         botInstance,
         chatId,
-        '⚠️ You are out of credit limit. Recharge fast to continue with the AI bot.',
+        '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.',
         msg.message_id
       );
       persistBotState();
@@ -2831,7 +2839,7 @@ app.get('/bot-credit/:botId', requireAuth, (req, res) => {
     botId,
     remainingUsd: credit.remainingUsd,
     depleted: credit.depleted,
-    warning: credit.depleted ? '⚠️ You are out of credit limit. Recharge fast to continue with the AI bot.' : ''
+    warning: credit.depleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : ''
   });
 });
 
@@ -3670,11 +3678,12 @@ app.post('/billing/create-checkout-session', requireAuth, billingRateLimit, asyn
   }
 });
 
-app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async (req, res) => {
+app.post('/billing/create-credit-session', billingRateLimit, async (req, res) => {
   const reqUser = req.user as Express.User | undefined;
-  const email = (reqUser?.email || '').trim().toLowerCase();
-  if (!email) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
+  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const email = (reqUser?.email || bodyEmail || '').trim().toLowerCase();
+  if (!email && !reqUser) {
+    // Guest checkout is allowed; Stripe will collect email during checkout if omitted.
   }
 
   const amountRaw = Number(req.body?.amountUsd);
@@ -3692,9 +3701,9 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
   if (!botId) {
     return res.status(400).json({ success: false, message: 'botId is required for credit top-up.' });
   }
-  const owner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
-  if (!owner || owner !== email) {
-    return res.status(403).json({ success: false, message: 'Access denied for this bot credit top-up.' });
+  const hasBot = botTokens.has(botId) || Boolean(getPersistedTelegramOwner(botId));
+  if (!hasBot) {
+    return res.status(404).json({ success: false, message: 'Bot not found for credit top-up.' });
   }
 
   const stripeSecretKey = getStripeSecretKey();
@@ -3711,11 +3720,15 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
     params.set('mode', 'payment');
     params.set('success_url', successUrl);
     params.set('cancel_url', cancelUrl);
-    params.set('customer_email', email);
+    if (email) {
+      params.set('customer_email', email);
+    }
     params.set('payment_method_types[0]', 'card');
     params.set('client_reference_id', reqUser?.id || randomUUID());
     params.set('metadata[purchase_type]', 'credit_topup');
-    params.set('metadata[user_email]', email);
+    if (email) {
+      params.set('metadata[user_email]', email);
+    }
     params.set('metadata[amount_usd]', String(amountUsd));
     params.set('metadata[bot_id]', botId);
     params.set('line_items[0][price_data][currency]', 'usd');
@@ -3742,12 +3755,10 @@ app.post('/billing/create-credit-session', requireAuth, billingRateLimit, async 
   }
 });
 
-app.post('/billing/confirm-credit-session', requireAuth, async (req, res) => {
+app.post('/billing/confirm-credit-session', async (req, res) => {
   const reqUser = req.user as Express.User | undefined;
-  const email = (reqUser?.email || '').trim().toLowerCase();
-  if (!email) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
+  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const email = (reqUser?.email || bodyEmail || '').trim().toLowerCase();
 
   const sessionId = String(req.body?.sessionId || '').trim();
   const botId = String(req.body?.botId || '').trim();
@@ -3759,9 +3770,9 @@ app.post('/billing/confirm-credit-session', requireAuth, async (req, res) => {
     return res.json({ success: true, botId, remainingUsd: credit.remainingUsd, alreadyProcessed: true });
   }
 
-  const owner = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
-  if (!owner || owner !== email) {
-    return res.status(403).json({ success: false, message: 'Access denied for this bot.' });
+  const hasBot = botTokens.has(botId) || Boolean(getPersistedTelegramOwner(botId));
+  if (!hasBot) {
+    return res.status(404).json({ success: false, message: 'Bot not found.' });
   }
 
   const stripeSecretKey = getStripeSecretKey();
@@ -3786,8 +3797,11 @@ app.post('/billing/confirm-credit-session', requireAuth, async (req, res) => {
     const metaBotId = String(metadata?.bot_id || '').trim();
     const amountUsd = Math.max(0, Math.floor(Number(metadata?.amount_usd || 0)));
     const paid = String(data?.payment_status || '').toLowerCase() === 'paid';
-    if (!paid || purchaseType !== 'credit_topup' || metaEmail !== email || metaBotId !== botId || amountUsd < 10) {
+    if (!paid || purchaseType !== 'credit_topup' || metaBotId !== botId || amountUsd < 10) {
       return res.status(400).json({ success: false, message: 'Checkout session is not eligible for credit top-up.' });
+    }
+    if (email && metaEmail && metaEmail !== email) {
+      return res.status(403).json({ success: false, message: 'Session email mismatch.' });
     }
 
     processedCreditSessions.add(sessionId);
@@ -3871,23 +3885,25 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   });
 });
 
-const creditDecayTimer = setInterval(() => {
-  let changed = false;
-  for (const botId of botTokens.keys()) {
-    const before = botCredits.get(botId)?.remainingUsd ?? INITIAL_BOT_CREDIT_USD;
-    const after = applyCreditDecay(botId).remainingUsd;
-    if (after !== before) changed = true;
-  }
-  if (changed) {
-    persistBotState();
-  }
-}, 30_000);
-creditDecayTimer.unref();
+const creditDecayTimer = CREDIT_ENFORCEMENT_ENABLED
+  ? setInterval(() => {
+    let changed = false;
+    for (const botId of botTokens.keys()) {
+      const before = botCredits.get(botId)?.remainingUsd ?? INITIAL_BOT_CREDIT_USD;
+      const after = applyCreditDecay(botId).remainingUsd;
+      if (after !== before) changed = true;
+    }
+    if (changed) {
+      persistBotState();
+    }
+  }, 30_000)
+  : null;
+creditDecayTimer?.unref();
 
 // Graceful shutdown handling
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
-  clearInterval(creditDecayTimer);
+  if (creditDecayTimer) clearInterval(creditDecayTimer);
   discordGatewayClients.forEach((client) => {
     try {
       client.destroy();
@@ -3901,7 +3917,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
-  clearInterval(creditDecayTimer);
+  if (creditDecayTimer) clearInterval(creditDecayTimer);
   discordGatewayClients.forEach((client) => {
     try {
       client.destroy();
@@ -3912,4 +3928,5 @@ process.on('SIGINT', () => {
     console.log('Process terminated');
   });
 });
+
 
