@@ -847,13 +847,25 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|algorithm|leetcode)/.test(lower)) {
     return 'Yes, I can help with coding. Send the exact problem statement and preferred language, and I will provide a correct solution with explanation.';
   }
+  if (/(population of india|india population)/.test(lower)) {
+    return 'India has an estimated population of about 1.43 billion people.';
+  }
+  if (/(population of china|china population)/.test(lower)) {
+    return 'China has an estimated population of about 1.41 billion people.';
+  }
+  if (/(population of (usa|united states)|usa population|united states population)/.test(lower)) {
+    return 'The United States has an estimated population of about 340 million people.';
+  }
+  if (/(population of world|world population|global population)/.test(lower)) {
+    return 'The world population is estimated at about 8.1 billion people.';
+  }
   if (/(snape|severus)/.test(lower)) {
     return 'Severus Snape is a key character in the Harry Potter series: a Hogwarts professor, former Death Eater, and ultimately a double agent who protected Harry.';
   }
   if (/(your real name|real name|official name)/.test(lower)) {
     return 'My official name is set by your Telegram bot profile.';
   }
-  return `I could not generate a reliable answer for "${text.slice(0, 80)}" right now. Please rephrase it in one clear line and I will answer directly.`;
+  return 'Temporary AI service issue. Please retry in a few seconds.';
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
