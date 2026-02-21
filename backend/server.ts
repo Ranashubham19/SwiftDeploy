@@ -1444,7 +1444,12 @@ const enforceProfessionalReplyQuality = (prompt: string, reply: string, conversa
 
   const q = String(prompt || '').toLowerCase().replace(/\s+/g, ' ');
   if (/(what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what i called you|what did i call you)/.test(q)) {
-    return `You can call me ${getAssistantName(conversationKey)}.`;
+    const official = getOfficialAssistantName(conversationKey);
+    const alias = sanitizeAssistantName(userProfiles.get(conversationKey || '')?.assistantName || '');
+    if (alias) {
+      return `My official name is ${official}. In this chat, you can call me ${alias}.`;
+    }
+    return `My official name is ${official}.`;
   }
   if (/(can i call you|i will call you|from now i call you|your name is|you are)/.test(q)) {
     const renameTo = extractAssistantRenameCommand(prompt);
@@ -1612,11 +1617,8 @@ const sanitizeAssistantName = (input: string): string => {
     .slice(0, 32);
 };
 
-const getAssistantName = (conversationKey?: string): string => {
+const getOfficialAssistantName = (conversationKey?: string): string => {
   if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
-  const profile = userProfiles.get(conversationKey);
-  const preferred = sanitizeAssistantName(profile?.assistantName || '');
-  if (preferred) return preferred;
   const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
   const telegramBotId = String(tgMatch?.[1] || '').trim();
   if (telegramBotId) {
@@ -1625,6 +1627,20 @@ const getAssistantName = (conversationKey?: string): string => {
     const botUsername = sanitizeAssistantName(telegramBotUsernames.get(telegramBotId) || '');
     if (botUsername) return botUsername;
   }
+  return DEFAULT_ASSISTANT_NAME;
+};
+
+const getAssistantName = (conversationKey?: string): string => {
+  if (!conversationKey) return DEFAULT_ASSISTANT_NAME;
+  const tgMatch = conversationKey.match(/^telegram:([^:]+):/i);
+  const telegramBotId = String(tgMatch?.[1] || '').trim();
+  if (telegramBotId) {
+    // Telegram real identity should stay the BotFather name/username.
+    return getOfficialAssistantName(conversationKey);
+  }
+  const profile = userProfiles.get(conversationKey);
+  const preferred = sanitizeAssistantName(profile?.assistantName || '');
+  if (preferred) return preferred;
   return DEFAULT_ASSISTANT_NAME;
 };
 
@@ -2006,8 +2022,10 @@ const generateProfessionalReply = async (
 
   const normalizedPrompt = trimmedInput.toLowerCase().replace(/\s+/g, ' ');
   if (/(who are you|what are you|what('?s| is)\s+your\s+name|your name\??|what (should|can|do) i call you|what is call you|what i call you|what i called you|what did i call you)/.test(normalizedPrompt)) {
-    const currentName = getAssistantName(conversationKey);
-    const answer = `You can call me ${currentName}. I can help with coding, debugging, setup, deployment, and general questions.`;
+    const officialName = getOfficialAssistantName(conversationKey);
+    const alias = sanitizeAssistantName(userProfiles.get(conversationKey || '')?.assistantName || '');
+    const aliasLine = alias ? ` In this chat, you can also call me ${alias}.` : '';
+    const answer = `My official name is ${officialName}.${aliasLine} I can help with coding, debugging, setup, deployment, and general questions.`;
     appendChatHistory(conversationKey, trimmedInput, answer);
     return answer;
   }
