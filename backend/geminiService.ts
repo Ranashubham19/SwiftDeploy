@@ -11,7 +11,7 @@ type IntentType = 'math' | 'current_event' | 'coding' | 'general';
 export type AIRuntimeConfig = { provider?: string; model?: string; forceProvider?: boolean };
 
 const MAX_HISTORY_TURNS = parseInt(process.env.HISTORY_MAX_TURNS || '120', 10);
-const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'true').trim().toLowerCase() !== 'false';
+const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'false').trim().toLowerCase() !== 'false';
 const WEB_TIMEOUT_MS = parseInt(process.env.WEB_TIMEOUT_MS || (FAST_REPLY_MODE ? '1800' : '3500'), 10);
 const WEB_MAX_SNIPPETS = parseInt(process.env.WEB_MAX_SNIPPETS || (FAST_REPLY_MODE ? '3' : '5'), 10);
 const WEB_MAX_CHARS = 2500;
@@ -22,7 +22,7 @@ const RETRIEVAL_MAX_QUERIES = parseInt(process.env.RETRIEVAL_MAX_QUERIES || (FAS
 const retrievalCache = new Map<string, { docs: RetrievalDoc[]; expiresAt: number }>();
 const MODEL_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.25');
 const MODEL_TOP_P = 0.8;
-const MODEL_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || (FAST_REPLY_MODE ? '800' : '1200'), 10);
+const MODEL_MAX_TOKENS = Math.max(1200, parseInt(process.env.AI_MAX_TOKENS || (FAST_REPLY_MODE ? '1200' : '1800'), 10));
 const HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const CHATGPT_52_MODE = (process.env.CHATGPT_52_MODE || 'true').trim().toLowerCase() !== 'false';
 const OPENROUTER_MAX_MODEL_ATTEMPTS = Math.max(1, parseInt(process.env.OPENROUTER_MAX_MODEL_ATTEMPTS || (FAST_REPLY_MODE ? '2' : '4'), 10) || 2);
@@ -144,14 +144,15 @@ Core rules:
 - Never fabricate facts, sources, links, or capabilities.
 - If uncertain, say uncertainty clearly and ask a clarifying question.
 - Use prior conversation context when relevant.
-- Keep answers concise but complete by default (normally 3-5 sentences unless user asks for short).
+- Default to high-depth professional answers (normally 2-4 strong paragraphs) unless user explicitly asks for short output.
 - For time-sensitive facts, prioritize current verified information and avoid stale date boilerplate or unnecessary old-year mentions.
 - For coding tasks, provide correct, runnable, maintainable output and call out key edge cases.
+- Keep tone mature, polished, and executive-grade.
 
 Response style:
 1) Direct answer first.
-2) Brief explanation.
-3) Steps or bullets only when useful.
+2) Deep explanation with strong reasoning.
+3) Steps, bullets, or framework when useful for execution.
   `.trim();
   return customInstruction ? `${base}\n\n${customInstruction.trim()}` : base;
 };

@@ -614,7 +614,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BASE_URL = derivedBaseUrl.replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
-const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'true').trim().toLowerCase() !== 'false';
+const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'false').trim().toLowerCase() !== 'false';
 const rawTimeoutMs = parseInt(process.env.AI_RESPONSE_TIMEOUT_MS || (FAST_REPLY_MODE ? '15000' : '25000'), 10);
 const AI_RESPONSE_TIMEOUT_MS = Math.max(5000, Math.min(rawTimeoutMs, 20000));
 const AI_MAX_RETRY_PASSES = FAST_REPLY_MODE ? 0 : Math.max(0, parseInt(process.env.AI_MAX_RETRY_PASSES || '1', 10));
@@ -993,10 +993,14 @@ const generateEmergencyReply = (messageText: string): string => {
   const lower = text.toLowerCase();
   if (!text) return 'Please send your question and I will help immediately.';
   if (isGreetingPrompt(lower)) {
-    return 'Hello. Ask your question and I will answer directly.';
+    return `Hello. I am active and ready to help you with a full professional response.
+
+Share your exact question, objective, or problem statement, and I will provide a detailed answer with clear reasoning and practical steps.`;
   }
   if (/(how are you|how r u|how're you)/.test(lower)) {
-    return 'I am ready to help. Tell me what you need.';
+    return `I am fully available and ready to assist at a professional standard.
+
+Tell me your exact requirement, and I will provide a complete, structured, and actionable response.`;
   }
   if (/(bye|good ?night|good ?bye)/.test(lower)) {
     return 'Goodbye. I will be here whenever you need help.';
@@ -1010,10 +1014,14 @@ const generateEmergencyReply = (messageText: string): string => {
 4. Track progress every day and correct the weakest habit first.`;
   }
   if (/(help|support|issue|error|problem|bug|not working)/.test(lower)) {
-    return 'I can help. Share the exact error and I will give you a direct fix.';
+    return `I can help. Please share the exact error message, what you expected, and what happened instead.
+
+Once you provide that context, I will give you a detailed root-cause analysis and a precise fix path.`;
   }
   if (/(code|coding|python|javascript|typescript|java|c\+\+|sql|algorithm|leetcode)/.test(lower)) {
-    return 'Yes, I can help with coding. Send the exact problem statement and preferred language, and I will provide a correct solution with explanation.';
+    return `Yes, I can help with coding at production quality.
+
+Send the exact problem statement, sample input/output (if any), and preferred language, and I will provide a correct solution with explanation, edge cases, and implementation notes.`;
   }
   if (/(population of india|india population)/.test(lower)) {
     return 'India has an estimated population of about 1.43 billion people.';
@@ -1039,7 +1047,9 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(your real name|real name|official name)/.test(lower)) {
     return 'My official name is set by your Telegram bot profile.';
   }
-  return 'Temporary AI service issue. Please retry in a few seconds.';
+  return `Temporary AI processing issue detected.
+
+Please resend your question once. I will return a detailed, professional answer with the right depth and structure.`;
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
@@ -1336,27 +1346,60 @@ const isGreetingPrompt = (text: string): boolean => {
 const isSimplePrompt = (text: string): boolean => {
   const v = String(text || '').trim();
   if (!v) return true;
-  if (v.length <= 40 && v.split(/\s+/).length <= 8) return true;
+  if (v.length <= 24 && v.split(/\s+/).length <= 5) return true;
   return false;
+};
+
+const isExplicitBriefRequest = (text: string): boolean => {
+  const q = String(text || '').toLowerCase();
+  return /(short answer|brief answer|in short|one line|one-liner|tl;dr|concise)/.test(q);
 };
 
 const instantProfessionalReply = (text: string): string | null => {
   const q = String(text || '').trim().toLowerCase();
   if (!q) return null;
-  if (isGreetingPrompt(q)) {
-    return 'Hello. Ask your question and I will give a direct professional answer.';
+  if (isGreetingPrompt(q) || /(how are you|how r u|how're you)/.test(q)) {
+    return `I am fully operational and ready to support you at a professional level.
+
+Whether you need technical guidance, strategic thinking, writing support, or step-by-step execution planning, I can provide detailed and structured answers with practical depth.
+
+If you share your exact question or objective, I will give a complete response with clear reasoning, actionable recommendations, and the best next steps.`;
   }
   if (/(can you do coding|do you know coding|can you code|are you good at coding)/.test(q)) {
-    return 'Yes. I can write, debug, optimize, and explain code in Python, JavaScript/TypeScript, Java, C++, SQL, and more. Share the exact problem and preferred language.';
+    return `Yes. I can support production-grade coding and engineering work across Python, JavaScript/TypeScript, Java, C++, SQL, APIs, debugging, architecture decisions, and optimization.
+
+I can provide:
+- Correct and runnable code
+- Root-cause debugging analysis
+- Refactoring for readability and maintainability
+- Performance and reliability improvements
+
+Share your exact problem statement and preferred language, and I will deliver a complete professional solution.`;
   }
   if (/who are you|what are you/.test(q)) {
-    return 'I am your AI assistant for this bot. I can help with coding, strategy, learning, troubleshooting, and practical planning.';
+    return `I am your professional AI assistant configured for high-quality technical and strategic support.
+
+My role is to give accurate, mature, and implementation-ready answers rather than vague advice. I can help with coding, troubleshooting, decision frameworks, documentation, and execution planning.
+
+If you provide your context and goal, I will give a detailed response tailored to your use case.`;
   }
   if (/what can you do|your capabilities|how can you help/.test(q)) {
-    return 'I can solve technical problems, explain concepts clearly, draft professional content, and provide actionable step-by-step plans.';
+    return `I provide end-to-end professional support across technical and operational work.
+
+Core capabilities:
+- Software engineering: coding, debugging, architecture, API design, optimization
+- Product and execution: planning, prioritization, process frameworks
+- Communication: polished drafts, structured explanations, and documentation
+- Decision support: comparisons, trade-off analysis, and recommended actions
+
+Send a specific task and I will produce a detailed, practical answer you can apply immediately.`;
   }
   if (/what is ai\b|define ai\b/.test(q)) {
-    return 'AI is software that performs tasks requiring human-like intelligence, such as understanding language, reasoning, prediction, and decision support.';
+    return `Artificial Intelligence (AI) is a class of systems designed to perform tasks that typically require human cognitive ability, such as understanding language, finding patterns, reasoning, prediction, and decision support.
+
+At a practical level, modern AI models learn from large datasets and then generalize to new inputs. In real-world use, AI is most valuable when it improves speed, consistency, and quality of decision-making while humans define the objective, constraints, and governance.
+
+The best approach is to treat AI as a high-leverage assistant: it can accelerate output, but final direction and accountability remain with the user or team.`;
   }
   if (/(value of pi|what is pi\b|pi value)/.test(q)) {
     return 'Pi is approximately 3.141592653589793 (commonly 3.14).';
@@ -1575,8 +1618,10 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
   cleaned = expandInlinePointMarkers(cleaned);
   cleaned = normalizeParagraphFlow(cleaned);
 
-  if (isGreetingPrompt(prompt)) {
-    return 'Hello! How can I help you today?';
+  if (isGreetingPrompt(prompt) && !isExplicitBriefRequest(prompt)) {
+    return `Hello. I am fully ready to assist you with detailed, professional answers.
+
+Share your exact question or objective, and I will give you a structured response with clear reasoning, practical recommendations, and the best next steps.`;
   }
 
   // Remove forced boilerplate sections and keep direct answer only.
@@ -1617,11 +1662,11 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
 
   const hasStructuredPointLines = /\n\s*(-|\*|\u2022|\d+[.)])\s+/.test(cleaned);
 
-  // Never truncate short prompts to one sentence when structured points are present.
-  if (isSimplePrompt(prompt) && !hasStructuredPointLines && !isPointWisePrompt(prompt)) {
+  // Keep depth by default unless user explicitly requests brevity.
+  if (isExplicitBriefRequest(prompt) && !hasStructuredPointLines) {
     const simpleSentences = toSentenceChunks(cleaned);
-    if (simpleSentences.length > 0 && simpleSentences.length <= 3) {
-      return simpleSentences.join(' ');
+    if (simpleSentences.length > 0) {
+      return simpleSentences.slice(0, 3).join(' ');
     }
   }
 
@@ -2301,15 +2346,15 @@ You are ${assistantDisplayName}, a high-quality professional assistant.
 Rules:
 - Prioritize correctness over guessing.
 - Use a professional, calm tone and clean formatting.
-- Give the direct answer first, then concise explanation.
-- Adapt answer length to question complexity: short for simple facts, deeper for analytical prompts.
+- Give the direct answer first, then a deep explanation.
+- Default to rich, high-quality depth (typically 2-4 strong paragraphs) unless the user explicitly asks for a short reply.
 - Use short sections or bullets only when they improve clarity.
 - For compare/difference questions, provide point-wise comparison.
 - For coding, provide runnable code and mention key assumptions.
 - Never hallucinate facts, links, or references.
 - If a question is ambiguous, ask one precise clarifying question.
 - For time-sensitive questions, prefer verified current facts and state uncertainty briefly when needed.
-- Use relevant professional emoji sparingly to improve readability.
+- Keep language mature, polished, and executive-grade.
 ${modeBlock}
 ${envProfile ? `\nUser profile:\n${envProfile}` : ''}
 ${profileHints ? `\nPersonalization hints:\n${profileHints}` : ''}
@@ -2469,14 +2514,28 @@ const generateProfessionalReply = async (
     return answer;
   }
   if (isGreetingPrompt(normalizedPrompt)) {
-    const fastGreeting = finalizeProfessionalReply(trimmedInput, 'Hello! How can I help you today?', conversationKey);
+    const fastGreeting = finalizeProfessionalReply(
+      trimmedInput,
+      `Hello. I am ready to support you with a detailed and professional response.
+
+Share your exact question, context, and goal, and I will provide clear analysis plus practical next steps.`,
+      conversationKey
+    );
     appendChatHistory(conversationKey, trimmedInput, fastGreeting);
     return fastGreeting;
   }
   if (/(what can you do|capabilities|how can you help|what do you do)/.test(normalizedPrompt)) {
     const answer = finalizeProfessionalReply(
       trimmedInput,
-      'I can answer questions, help fix code, troubleshoot deployment issues, and guide Telegram/Discord bot setup step by step.',
+      `I can provide full professional support across technical and strategic work.
+
+What I can do for you:
+- Deep technical help: coding, debugging, architecture, API integration, optimization
+- Product execution: planning, prioritization, roadmaps, and decision frameworks
+- Communication quality: professional drafts, structured explanations, and clean documentation
+- Operational guidance: troubleshooting, deployment fixes, and risk-aware recommendations
+
+Send your exact task, and I will deliver a detailed, mature, implementation-ready answer.`,
       conversationKey
     );
     appendChatHistory(conversationKey, trimmedInput, answer);
