@@ -335,7 +335,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
           <div className="text-sm text-zinc-500 font-semibold">
             ${Math.max(0, 10 - remainingCreditUsd)} used
             <span className="mx-2">|</span>
-            Deducts $1 every 2 minutes
+            Secure checkout active
             <span className="mx-2">|</span>
             $10 initial credit
           </div>

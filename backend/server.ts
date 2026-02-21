@@ -102,10 +102,10 @@ type BotCreditState = {
 };
 const botCredits = new Map<string, BotCreditState>();
 const INITIAL_BOT_CREDIT_USD = Math.max(1, parseInt(process.env.BOT_INITIAL_CREDIT_USD || '10', 10));
-const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '120000', 10));
+const CREDIT_DEDUCT_INTERVAL_MS = Math.max(30_000, parseInt(process.env.BOT_CREDIT_DEDUCT_INTERVAL_MS || '129600000', 10));
 const CREDIT_DEDUCT_AMOUNT_USD = Math.max(1, parseInt(process.env.BOT_CREDIT_DEDUCT_AMOUNT_USD || '1', 10));
-const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'false').trim().toLowerCase() === 'true';
-const CREDIT_ENFORCEMENT_PAUSED = (process.env.BOT_CREDIT_ENFORCEMENT_PAUSED || 'true').trim().toLowerCase() !== 'false';
+const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'true').trim().toLowerCase() === 'true';
+const CREDIT_ENFORCEMENT_PAUSED = (process.env.BOT_CREDIT_ENFORCEMENT_PAUSED || 'false').trim().toLowerCase() !== 'false';
 const CREDIT_ENFORCEMENT_ACTIVE = CREDIT_ENFORCEMENT_ENABLED && !CREDIT_ENFORCEMENT_PAUSED;
 const processedCreditSessions = new Set<string>();
 type TelegramBotConfig = {
@@ -883,7 +883,7 @@ const generateEmergencyReply = (messageText: string): string => {
   const text = String(messageText || '').trim();
   const lower = text.toLowerCase();
   if (!text) return 'Please send your question and I will help immediately.';
-  if (/^(hi|hii|hello|hey)\b/.test(lower)) {
+  if (isGreetingPrompt(lower)) {
     return 'Hello. Ask your question and I will answer directly.';
   }
   if (/(how are you|how r u|how're you)/.test(lower)) {
@@ -892,8 +892,13 @@ const generateEmergencyReply = (messageText: string): string => {
   if (/(bye|good ?night|good ?bye)/.test(lower)) {
     return 'Goodbye. I will be here whenever you need help.';
   }
-  if (/(ready to control my life|control my life|improve my life|discipline|focus|productivity)/.test(lower)) {
-    return 'Great mindset. Start with 3 rules today: 1) pick one priority and finish it before social media, 2) use 50 minutes work + 10 minutes break for 4 cycles, 3) end day with a 5-minute written plan for tomorrow.';
+  if (/(ready to control my (life|mind)|control my (life|mind)|improve my life|discipline|focus|productivity)/.test(lower)) {
+    return `Great mindset. Use this execution framework:
+
+1. Set one clear target for the next 30 days.
+2. Remove top distractions and lock focused work windows.
+3. Execute daily with a fixed routine and review at night.
+4. Track progress every day and correct the weakest habit first.`;
   }
   if (/(help|support|issue|error|problem|bug|not working)/.test(lower)) {
     return 'I can help. Share the exact error and I will give you a direct fix.';
@@ -1228,7 +1233,7 @@ const isSimplePrompt = (text: string): boolean => {
 const instantProfessionalReply = (text: string): string | null => {
   const q = String(text || '').trim().toLowerCase();
   if (!q) return null;
-  if (/^(hi|hii|hello|hey|yo)\b/.test(q)) {
+  if (isGreetingPrompt(q)) {
     return 'Hello. Ask your question and I will give a direct professional answer.';
   }
   if (/(can you do coding|do you know coding|can you code|are you good at coding)/.test(q)) {
@@ -1249,8 +1254,15 @@ const instantProfessionalReply = (text: string): string | null => {
   if (/(longest prime|largest prime|biggest prime)/.test(q)) {
     return 'There is no longest prime number. Primes are infinite.';
   }
-  if (/ready to control my life|control my life|fix my life|change my life/.test(q)) {
-    return 'Yes. Start now with this 24-hour reset: 1) choose one non-negotiable task and finish it today, 2) block distractions for 2 deep-work sessions (50/10), 3) sleep on time and write tomorrow\'s top 3 tasks before bed.';
+  if (/(ready to control my (life|mind)|control my (life|mind)|fix my life|change my life|build discipline|improve my focus)/.test(q)) {
+    return `Yes. I can help you build strong control with a practical system.
+
+1. Define one 30-day target and one measurable daily action.
+2. Block top distractions and run two deep-work sessions (50/10).
+3. Follow a fixed routine: sleep, wake, work, and review at the same times.
+4. Track daily execution score and adjust weak points every night.
+
+Share your current routine, and I will give you a personalized plan.`;
   }
   if (/motivate me|motivation|i am lazy|procrastinating/.test(q)) {
     return 'Do not wait for motivation. Use action first: pick one 20-minute task, start a timer, finish it, then continue one more cycle.';
@@ -1304,7 +1316,7 @@ const normalizeParagraphFlow = (text: string): string => {
       .filter(Boolean);
     if (!lines.length) return '';
 
-    const isListLine = (line: string) => /^(-|\*|\d+\.)\s+/.test(line);
+    const isListLine = (line: string) => /^(-|\*|\u2022|\d+[.)])\s+/.test(line);
     const isSectionLabel = (line: string) => /^[A-Z][A-Za-z0-9 /()-]{2,40}:$/.test(line);
     const hasStructuredLines = lines.some((line) => isListLine(line) || isSectionLabel(line));
 
@@ -1332,6 +1344,47 @@ const normalizeParagraphFlow = (text: string): string => {
     .trim();
 };
 
+const expandInlinePointMarkers = (text: string): string => {
+  const value = String(text || '').replace(/\r/g, '').trim();
+  if (!value) return value;
+  const segments = value.split(/(```[\s\S]*?```)/g).filter(Boolean);
+
+  const expandInSegment = (segment: string): string => {
+    let out = segment;
+
+    out = out.replace(/\s*[\u2022\u25CF\u25AA\u25E6\u25A0\u25B9\u25B8\u25BA]\s+/g, '\n- ');
+
+    const splitMarkers = (input: string, markerRegex: RegExp): string => {
+      const matches = input.match(markerRegex) || [];
+      if (matches.length < 2) return input;
+      return input.replace(markerRegex, (match, _g1, offset: number, source: string) => {
+        if (offset <= 0) return match;
+        const prevChar = source[offset - 1];
+        if (prevChar === '\n') return match;
+        if (prevChar === ':' || prevChar === ';' || /\s/.test(prevChar)) {
+          return `\n${match}`;
+        }
+        return match;
+      });
+    };
+
+    out = splitMarkers(out, /(\d+\))\s+/g);
+    out = splitMarkers(out, /(\d+\.)\s+/g);
+
+    return out
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+  };
+
+  return segments
+    .map((segment) => (segment.startsWith('```') ? segment.trim() : expandInSegment(segment)))
+    .filter(Boolean)
+    .join('\n\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
 const isComparisonPrompt = (prompt: string): boolean => {
   const q = String(prompt || '').toLowerCase();
   return /(compare|comparison|difference|vs\b|versus|better than|pros and cons|pros & cons|advantages and disadvantages)/.test(q);
@@ -1339,14 +1392,14 @@ const isComparisonPrompt = (prompt: string): boolean => {
 
 const isPointWisePrompt = (prompt: string): boolean => {
   const q = String(prompt || '').toLowerCase();
-  return /(points|list|step by step|steps|plan|roadmap|compare|difference|pros|cons)/.test(q);
+  return /(points|list|step by step|steps|plan|roadmap|compare|difference|pros|cons|how to|strategy|framework|action plan|discipline|productivity|routine|control my life|control my mind|improve my life|improve my focus)/.test(q);
 };
 
 const enforceStructuredPoints = (prompt: string, text: string): string => {
   const value = String(text || '').trim();
   if (!value || value.includes('```')) return value;
   if (!isPointWisePrompt(prompt)) return value;
-  if (/\n\s*(-|\*|\d+\.)\s+/.test(value)) return value;
+  if (/\n\s*(-|\*|\u2022|\d+[.)])\s+/.test(value)) return value;
 
   const sentences = toSentenceChunks(value);
   if (sentences.length < 2) return value;
@@ -1380,6 +1433,7 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     }
   }
 
+  cleaned = expandInlinePointMarkers(cleaned);
   cleaned = normalizeParagraphFlow(cleaned);
 
   if (isGreetingPrompt(prompt)) {
@@ -1408,8 +1462,24 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     .replace(/\s{2,}/g, ' ')
     .trim();
 
-  // Never truncate short prompts to one sentence.
-  if (isSimplePrompt(prompt)) {
+  const shouldAutoPointify =
+    !cleaned.includes('```')
+    && !/\n\s*(-|\*|\u2022|\d+[.)])\s+/.test(cleaned)
+    && (
+      (
+        /(how|why|strategy|framework|roadmap|routine|discipline|focus|productivity|mindset|control my life|control my mind|improve)/.test(String(prompt || '').toLowerCase())
+        && toSentenceChunks(cleaned).length >= 3
+      )
+      || (cleaned.length >= 320 && toSentenceChunks(cleaned).length >= 5)
+    );
+  if (shouldAutoPointify) {
+    cleaned = enforceStructuredPoints(`${prompt} points`, cleaned);
+  }
+
+  const hasStructuredPointLines = /\n\s*(-|\*|\u2022|\d+[.)])\s+/.test(cleaned);
+
+  // Never truncate short prompts to one sentence when structured points are present.
+  if (isSimplePrompt(prompt) && !hasStructuredPointLines) {
     const simpleSentences = toSentenceChunks(cleaned);
     if (simpleSentences.length > 0 && simpleSentences.length <= 3) {
       return simpleSentences.join(' ');
@@ -1564,6 +1634,15 @@ const isLowValueDeflectionReply = (text: string): boolean => {
   const v = String(text || '').toLowerCase().trim();
   if (!v) return true;
   return /(i can help with this\.?\s*share one clear question|share one clear question or goal|direct professional answer|i am ready to help.*ask your question|ready to help.*(ask|share).*(question|goal)|temporary ai service issue|please retry in a few seconds|could not generate a reliable answer)/s.test(v);
+};
+
+const finalizeProfessionalReply = (prompt: string, reply: string, conversationKey?: string): string => {
+  const polished = formatProfessionalResponse(reply, prompt);
+  let clean = ensureEmojiInReply(polished, prompt, conversationKey);
+  clean = enforceProfessionalReplyQuality(prompt, clean, conversationKey);
+  clean = applyAssistantIdentityPolicy(clean, conversationKey);
+  clean = applyEmojiStylePolicy(clean, conversationKey);
+  return clean.trim();
 };
 
 const enforceProfessionalReplyQuality = (prompt: string, reply: string, conversationKey?: string): string => {
@@ -2213,12 +2292,20 @@ const generateProfessionalReply = async (
   const renameTo = extractAssistantRenameCommand(trimmedInput);
   if (renameTo) {
     const appliedName = setAssistantNamePreference(conversationKey, renameTo);
-    const confirm = `Done. In this chat, you can call me ${appliedName}.`;
+    const confirm = finalizeProfessionalReply(
+      trimmedInput,
+      `Done. In this chat, you can call me ${appliedName}.`,
+      conversationKey
+    );
     appendChatHistory(conversationKey, trimmedInput, confirm);
     return confirm;
   }
   if (isRenameIntentPrompt(trimmedInput)) {
-    const askName = 'Please tell me the exact name you want to use, for example: "Can I call you Savio?"';
+    const askName = finalizeProfessionalReply(
+      trimmedInput,
+      'Please tell me the exact name you want to use, for example: "Can I call you Savio?"',
+      conversationKey
+    );
     appendChatHistory(conversationKey, trimmedInput, askName);
     return askName;
   }
@@ -2228,22 +2315,31 @@ const generateProfessionalReply = async (
     const officialName = getOfficialAssistantName(conversationKey);
     const alias = sanitizeAssistantName(userProfiles.get(conversationKey || '')?.assistantName || '');
     const aliasLine = alias ? ` In this chat, you can also call me ${alias}.` : '';
-    const answer = `My official name is ${officialName}.${aliasLine} I can help with coding, debugging, setup, deployment, and general questions.`;
+    const answer = finalizeProfessionalReply(
+      trimmedInput,
+      `My official name is ${officialName}.${aliasLine} I can help with coding, debugging, setup, deployment, and general questions.`,
+      conversationKey
+    );
     appendChatHistory(conversationKey, trimmedInput, answer);
     return answer;
   }
   const instant = instantProfessionalReply(trimmedInput);
   if (instant) {
-    appendChatHistory(conversationKey, trimmedInput, instant);
-    return instant;
+    const answer = finalizeProfessionalReply(trimmedInput, instant, conversationKey);
+    appendChatHistory(conversationKey, trimmedInput, answer);
+    return answer;
   }
   if (isGreetingPrompt(normalizedPrompt)) {
-    const fastGreeting = 'Hello! How can I help you today?';
+    const fastGreeting = finalizeProfessionalReply(trimmedInput, 'Hello! How can I help you today?', conversationKey);
     appendChatHistory(conversationKey, trimmedInput, fastGreeting);
     return fastGreeting;
   }
   if (/(what can you do|capabilities|how can you help|what do you do)/.test(normalizedPrompt)) {
-    const answer = 'I can answer questions, help fix code, troubleshoot deployment issues, and guide Telegram/Discord bot setup step by step.';
+    const answer = finalizeProfessionalReply(
+      trimmedInput,
+      'I can answer questions, help fix code, troubleshoot deployment issues, and guide Telegram/Discord bot setup step by step.',
+      conversationKey
+    );
     appendChatHistory(conversationKey, trimmedInput, answer);
     return answer;
   }
@@ -2295,19 +2391,13 @@ const generateProfessionalReply = async (
         'AI response timeout'
       );
       const polished = formatProfessionalResponse(response || 'No response generated.', trimmedInput);
-      let clean = ensureEmojiInReply(
-        polished,
-        trimmedInput,
-        conversationKey
-      );
-      clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
-      clean = applyAssistantIdentityPolicy(clean, conversationKey);
-      clean = applyEmojiStylePolicy(clean, conversationKey);
+      let clean = finalizeProfessionalReply(trimmedInput, polished, conversationKey);
       if (!clean || (clean.length < 24 && !isAcceptableShortAnswer(clean, trimmedInput))) {
-        clean = instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput);
-        clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
-        clean = applyAssistantIdentityPolicy(clean, conversationKey);
-        clean = applyEmojiStylePolicy(clean, conversationKey);
+        clean = finalizeProfessionalReply(
+          trimmedInput,
+          instantProfessionalReply(trimmedInput) || generateEmergencyReply(trimmedInput),
+          conversationKey
+        );
       }
       if (AI_ENABLE_STRICT_RETRY && (intent === 'current_event' || timeSensitive) && hasLowConfidenceMarkers(clean)) {
         const strictRetryPrompt = `${trimmedInput}\n\nRealtime expected. Use verified live data strictly. Do not fall back to 2023 memory.`;
@@ -2316,13 +2406,11 @@ const generateProfessionalReply = async (
           AI_RESPONSE_TIMEOUT_MS,
           'AI strict retry timeout'
         );
-        clean = ensureEmojiInReply(
-          formatProfessionalResponse(strictRetry || clean, trimmedInput),
+        clean = finalizeProfessionalReply(
           trimmedInput,
+          formatProfessionalResponse(strictRetry || clean, trimmedInput),
           conversationKey
         );
-        clean = applyAssistantIdentityPolicy(clean, conversationKey);
-        clean = applyEmojiStylePolicy(clean, conversationKey);
       }
       const shouldRetry = AI_MAX_RETRY_PASSES > 0
         && !isSimplePrompt(trimmedInput)
@@ -2335,23 +2423,13 @@ const generateProfessionalReply = async (
           'AI response timeout'
         );
         const retryPolished = formatProfessionalResponse(retry || clean, trimmedInput);
-        let retryClean = ensureEmojiInReply(
-          retryPolished,
-          trimmedInput,
-          conversationKey
-        );
-        retryClean = enforceProfessionalReplyQuality(trimmedInput, retryClean, conversationKey);
-        retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
-        retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
+        let retryClean = finalizeProfessionalReply(trimmedInput, retryPolished, conversationKey);
         if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
-          retryClean = ensureEmojiInReply(
-            formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
+          retryClean = finalizeProfessionalReply(
             trimmedInput,
+            formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, retryClean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
             conversationKey
           );
-          retryClean = enforceProfessionalReplyQuality(trimmedInput, retryClean, conversationKey);
-          retryClean = applyAssistantIdentityPolicy(retryClean, conversationKey);
-          retryClean = applyEmojiStylePolicy(retryClean, conversationKey);
         }
         appendChatHistory(conversationKey, trimmedInput, retryClean);
         if (!timeSensitive && !isLowValueDeflectionReply(retryClean)) {
@@ -2370,14 +2448,11 @@ const generateProfessionalReply = async (
         return retryClean;
       }
       if (AI_ENABLE_SELF_VERIFY && intent === 'current_event' && !isSimplePrompt(trimmedInput)) {
-        clean = ensureEmojiInReply(
-          formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
+        clean = finalizeProfessionalReply(
           trimmedInput,
+          formatProfessionalResponse(await selfVerifyAnswer(trimmedInput, clean, history, systemPrompt, aiRuntimeConfig), trimmedInput),
           conversationKey
         );
-        clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
-        clean = applyAssistantIdentityPolicy(clean, conversationKey);
-        clean = applyEmojiStylePolicy(clean, conversationKey);
       }
       appendChatHistory(conversationKey, trimmedInput, clean);
       if (!timeSensitive && !isLowValueDeflectionReply(clean)) {
@@ -2409,10 +2484,7 @@ const generateProfessionalReply = async (
           'Fallback AI response timeout'
         );
         const fallbackPolished = formatProfessionalResponse(fallback || 'No fallback response generated.', trimmedInput);
-        let clean = ensureEmojiInReply(fallbackPolished, trimmedInput, conversationKey);
-        clean = enforceProfessionalReplyQuality(trimmedInput, clean, conversationKey);
-        clean = applyAssistantIdentityPolicy(clean, conversationKey);
-        clean = applyEmojiStylePolicy(clean, conversationKey);
+        const clean = finalizeProfessionalReply(trimmedInput, fallbackPolished, conversationKey);
         appendChatHistory(conversationKey, trimmedInput, clean);
         if (!timeSensitive && !isLowValueDeflectionReply(clean)) {
           aiResponseCache.set(cacheKey, { text: clean, expiresAt: Date.now() + AI_CACHE_TTL_MS });
@@ -2430,7 +2502,8 @@ const generateProfessionalReply = async (
         return clean;
       } catch (fallbackError) {
         console.error('[AI] Fallback model failed:', fallbackError);
-        const emergency = generateEmergencyReply(trimmedInput);
+        const emergency = finalizeProfessionalReply(trimmedInput, generateEmergencyReply(trimmedInput), conversationKey);
+        appendChatHistory(conversationKey, trimmedInput, emergency);
         console.error('[AI_LOG] error', JSON.stringify({
           chatId: chatIdentity || null,
           scope,
