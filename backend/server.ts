@@ -4096,6 +4096,14 @@ app.post('/billing/create-telegram-subscription-session', requireAuth, billingRa
   const botUsername = String(verifyData?.result?.username || '').trim();
   const botName = String(verifyData?.result?.first_name || '').trim();
   const telegramBotId = String(verifyData?.result?.id || '').trim();
+  const existingOwnerEmail = (telegramBotOwners.get(telegramBotId) || getPersistedTelegramOwner(telegramBotId) || '').trim().toLowerCase();
+  if (existingOwnerEmail && existingOwnerEmail !== userEmail) {
+    return res.status(403).json({
+      success: false,
+      message: 'This Telegram bot token already belongs to another email account.',
+      details: 'Sign in with the original email owner or create a new bot token in @BotFather.'
+    });
+  }
   if (!botUsername) {
     return res.status(400).json({
       success: false,
