@@ -5,7 +5,7 @@ import { ICONS } from '../constants';
 import { apiUrl } from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
 
-type FlowStep = 'token' | 'send-first-message' | 'pairing' | 'success';
+type FlowStep = 'subscription' | 'token' | 'send-first-message' | 'pairing' | 'success';
 type DeployStep = 'input' | 'verifying' | 'provisioning' | 'webhooking';
 
 const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ user, bots, setBots }) => {
@@ -22,11 +22,21 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const stageIntentId = urlParams.get('intentId') || '';
   const stageSessionId = urlParams.get('session_id') || '';
   const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
+  const hasExistingTelegramBot = bots.some((b) => b.platform === Platform.TELEGRAM);
+  const selectedModel = String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH;
 
   const [token, setToken] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployStep, setDeployStep] = useState<DeployStep>('input');
-  const [flowStep, setFlowStep] = useState<FlowStep>(isSuccessStage ? 'success' : isSubscribeStage ? 'pairing' : 'token');
+  const [flowStep, setFlowStep] = useState<FlowStep>(() => {
+    if (isSuccessStage) return 'success';
+    if (isSubscribeStage) return 'pairing';
+    if (!hasExistingTelegramBot && !Boolean(user?.isSubscribed)) return 'subscription';
+    return 'token';
+  });
+  const [hasTelegramSubscription, setHasTelegramSubscription] = useState<boolean>(
+    Boolean(user?.isSubscribed) || hasExistingTelegramBot || isSuccessStage
+  );
   const [deployError, setDeployError] = useState('');
   const [showConnectedToast, setShowConnectedToast] = useState(false);
   const [connectedBotUsername, setConnectedBotUsername] = useState(stageBotUsername);
@@ -77,6 +87,26 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const generateDemoToken = () => {
     setToken('748291035:AAH_f9xS0v5k2m8Lp9qZ-rY7tW4u3i1o');
   };
+
+  useEffect(() => {
+    if (Boolean(user?.isSubscribed)) {
+      setHasTelegramSubscription(true);
+    }
+  }, [user?.isSubscribed]);
+
+  useEffect(() => {
+    if (hasExistingTelegramBot) {
+      setHasTelegramSubscription(true);
+    }
+  }, [hasExistingTelegramBot]);
+
+  useEffect(() => {
+    if (isSuccessStage || isSubscribeStage || hasExistingTelegramBot) return;
+    setFlowStep((current) => {
+      if (current === 'success' || current === 'send-first-message') return current;
+      return hasTelegramSubscription ? 'token' : 'subscription';
+    });
+  }, [isSuccessStage, isSubscribeStage, hasExistingTelegramBot, hasTelegramSubscription]);
 
   // Existing users who already have an active Telegram bot should land on the credits page directly.
   useEffect(() => {
@@ -166,7 +196,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       name: botName,
       platform: Platform.TELEGRAM,
       token: token.trim(),
-      model: location.state?.model || AIModel.GEMINI_3_FLASH,
+      model: selectedModel,
       status: BotStatus.ACTIVE,
       messageCount: 0,
       tokenUsage: 0,
@@ -210,7 +240,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       setDeployError('Subscription payment cancelled. Please try again.');
       setIsDeploying(false);
       setDeployStep('input');
-      setFlowStep('token');
+      setFlowStep('subscription');
       navigate('/connect/telegram', { replace: true, state: location.state });
       return;
     }
@@ -221,7 +251,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setDeployStep('verifying');
     setFlowStep('pairing');
 
-    const confirmSubscriptionAndDeploy = async () => {
+    const confirmSubscription = async () => {
       try {
         const response = await fetch(apiUrl('/billing/confirm-telegram-subscription-session'), {
           method: 'POST',
@@ -234,48 +264,70 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         if (!response.ok || !data?.success) {
           throw new Error(data?.message || data?.error || 'Subscription confirmation failed.');
         }
-        applyDeployResult(data);
+        setHasTelegramSubscription(true);
+        setIsDeploying(false);
+        setDeployStep('input');
+        setFlowStep('token');
         navigate('/connect/telegram', { replace: true, state: location.state });
       } catch (error: any) {
         if (!active) return;
         setIsDeploying(false);
         setDeployStep('input');
-        setFlowStep('token');
+        setFlowStep('subscription');
         setDeployError(error?.message || 'Unable to confirm subscription.');
       }
     };
 
-    confirmSubscriptionAndDeploy();
+    confirmSubscription();
     return () => {
       active = false;
     };
-  }, [isSubscribeStage, stageSubscribeStatus, stageSessionId, stageIntentId]);
+  }, [isSubscribeStage, stageSubscribeStatus, stageSessionId, stageIntentId, navigate, location.state]);
+
+  const handleStartSubscriptionCheckout = async () => {
+    setDeployError('');
+    setIsDeploying(true);
+    setDeployStep('verifying');
+    setFlowStep('pairing');
+
+    try {
+      const response = await fetch(apiUrl('/billing/create-telegram-subscription-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ model: selectedModel })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.message || data?.error || 'Unable to start secure checkout.');
+      }
+      if (data?.subscriptionRequired && data?.checkoutUrl) {
+        window.location.href = String(data.checkoutUrl);
+        return;
+      }
+      setHasTelegramSubscription(true);
+      setIsDeploying(false);
+      setDeployStep('input');
+      setFlowStep('token');
+    } catch (error: any) {
+      setIsDeploying(false);
+      setDeployStep('input');
+      setFlowStep('subscription');
+      setDeployError(error?.message || 'Unable to start secure checkout.');
+    }
+  };
 
   const handleConnect = async () => {
     if (!token) return;
+    if (!hasTelegramSubscription) {
+      setFlowStep('subscription');
+      setDeployError('Complete the $39 subscription checkout before connecting your bot token.');
+      return;
+    }
     setDeployError('');
     setIsDeploying(true);
 
     try {
-      // New users (no existing deployments) must complete the $39 subscription checkout before activation.
-      const subscriptionResponse = await fetch(apiUrl('/billing/create-telegram-subscription-session'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          botToken: token.trim(),
-          model: String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH
-        })
-      });
-      const subscriptionData = await subscriptionResponse.json().catch(() => ({}));
-      if (!subscriptionResponse.ok) {
-        throw new Error(subscriptionData?.message || subscriptionData?.error || 'Unable to start secure checkout.');
-      }
-      if (subscriptionResponse.ok && subscriptionData?.subscriptionRequired && subscriptionData?.checkoutUrl) {
-        window.location.href = String(subscriptionData.checkoutUrl);
-        return;
-      }
-
       setDeployStep('verifying');
       await new Promise((r) => setTimeout(r, 800));
 
@@ -291,7 +343,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         credentials: 'include',
         body: JSON.stringify({
           botToken: token.trim(),
-          model: String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH
+          model: selectedModel
         })
       });
 
@@ -303,15 +355,15 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({
-              botToken: token.trim(),
-              model: String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH
-            })
+            body: JSON.stringify({ model: selectedModel })
           });
           const retryData = await retryResponse.json().catch(() => ({}));
-          if (retryResponse.ok && retryData?.checkoutUrl) {
+          if (retryResponse.ok && retryData?.subscriptionRequired && retryData?.checkoutUrl) {
             window.location.href = String(retryData.checkoutUrl);
             return;
+          }
+          if (retryResponse.ok && !retryData?.subscriptionRequired) {
+            setHasTelegramSubscription(true);
           }
           throw new Error(retryData?.message || result?.error || 'Subscription required before deployment.');
         }
@@ -383,6 +435,34 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   };
 
   const renderFlowCard = () => {
+    if (flowStep === 'subscription') {
+      return (
+        <div className="space-y-6">
+          <h2 className="text-[17px] font-black text-white mb-4 italic uppercase tracking-tighter">Activate Telegram Subscription</h2>
+          <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/5 px-5 py-5 space-y-3">
+            <p className="text-zinc-200 text-sm font-semibold">$39 / month secure Stripe subscription</p>
+            <ul className="space-y-2 text-zinc-400 text-[13px]">
+              <li>1. Complete payment first to unlock Telegram deployment.</li>
+              <li>2. After payment, paste your bot token.</li>
+              <li>3. Deploy and then open your active credit page.</li>
+            </ul>
+          </div>
+          {deployError ? (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300">
+              {deployError}
+            </div>
+          ) : null}
+          <button
+            onClick={handleStartSubscriptionCheckout}
+            disabled={isDeploying}
+            className="w-full btn-deploy-gradient disabled:opacity-30 disabled:cursor-not-allowed text-white py-5 rounded-2xl font-black text-base transition-all uppercase"
+          >
+            {isDeploying ? 'Opening secure checkout...' : 'Pay $39 and continue'}
+          </button>
+        </div>
+      );
+    }
+
     if (flowStep === 'send-first-message') {
       return (
         <div className="space-y-6">
