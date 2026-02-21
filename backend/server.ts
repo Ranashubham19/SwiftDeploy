@@ -152,6 +152,7 @@ const CHAT_HISTORY_MAX_TURNS = parseInt(process.env.CHAT_HISTORY_MAX_TURNS || '1
 const CHAT_HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
 const AI_CACHE_TTL_MS = 2 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = parseInt(process.env.AI_CACHE_MAX_ENTRIES || '800', 10);
+const RESPONSE_STYLE_VERSION = 'pro_layout_v2';
 const MAX_USER_PROMPT_LENGTH = parseInt(process.env.MAX_USER_PROMPT_LENGTH || '6000', 10);
 const CHAT_MEMORY_FILE = (process.env.BOT_MEMORY_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -1270,6 +1271,47 @@ If you want, I can also give C++ or Java version.`;
   return null;
 };
 
+const normalizeParagraphFlow = (text: string): string => {
+  const value = String(text || '').replace(/\r/g, '').trim();
+  if (!value) return value;
+  const segments = value.split(/(```[\s\S]*?```)/g).filter(Boolean);
+
+  const normalizedSegments = segments.map((segment) => {
+    if (segment.startsWith('```')) return segment.trim();
+    const lines = segment
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.length) return '';
+
+    const isListLine = (line: string) => /^(-|\*|\d+\.)\s+/.test(line);
+    const isSectionLabel = (line: string) => /^[A-Z][A-Za-z0-9 /()-]{2,40}:$/.test(line);
+    const hasStructuredLines = lines.some((line) => isListLine(line) || isSectionLabel(line));
+
+    if (!hasStructuredLines) {
+      return lines.join(' ').replace(/\s{2,}/g, ' ').trim();
+    }
+
+    const rebuilt: string[] = [];
+    for (const line of lines) {
+      if (isListLine(line) || isSectionLabel(line)) {
+        rebuilt.push(line);
+      } else if (rebuilt.length > 0) {
+        rebuilt[rebuilt.length - 1] = `${rebuilt[rebuilt.length - 1]} ${line}`.replace(/\s{2,}/g, ' ').trim();
+      } else {
+        rebuilt.push(line);
+      }
+    }
+    return rebuilt.join('\n');
+  });
+
+  return normalizedSegments
+    .filter(Boolean)
+    .join('\n\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
 const formatProfessionalResponse = (text: string, prompt: string): string => {
   const raw = sanitizeForTelegram(text);
   if (!raw) return raw;
@@ -1293,15 +1335,7 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
     }
   }
 
-  // Improve readability by expanding list-like text into line-separated blocks.
-  cleaned = cleaned
-    .replace(/\s+([0-9]+)[\)\.]\s+/g, '\n$1. ')
-    .replace(/:\s*([0-9]+\.)\s/g, ':\n$1 ')
-    .replace(/(?:^|\n)\s*[-*]\s+/g, '\n- ')
-    .replace(/\n?-\s*/g, '\n- ')
-    .replace(/\n?([0-9]+\.)\s+/g, '\n$1 ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  cleaned = normalizeParagraphFlow(cleaned);
 
   if (isGreetingPrompt(prompt)) {
     return 'Hello! How can I help you today?';
@@ -1338,19 +1372,12 @@ const formatProfessionalResponse = (text: string, prompt: string): string => {
   }
 
   // If a long answer comes as one block, split by paragraph-sized chunks.
-  if (!cleaned.includes('\n') && cleaned.length > 320) {
+  if (!cleaned.includes('\n') && cleaned.length > 420) {
     const chunks = toSentenceChunks(cleaned);
-    cleaned = chunks.length > 3 ? chunks.join('\n\n') : cleaned;
+    cleaned = chunks.length > 4 ? chunks.join(' ') : cleaned;
   }
 
-  cleaned = cleaned
-    .replace(/([^\n])\n(-\s)/g, '$1\n\n$2')
-    .replace(/([^\n])\n([0-9]+\.\s)/g, '$1\n\n$2')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-
-  cleaned = applyProfessionalLayout(cleaned);
-  return cleaned;
+  return applyProfessionalLayout(cleaned);
 };
 
 const applyProfessionalLayout = (text: string): string => {
@@ -1364,8 +1391,6 @@ const applyProfessionalLayout = (text: string): string => {
     return part
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
-      .replace(/([^\n])\n([A-Z][^:\n]{2,40}:)/g, '$1\n\n$2')
-      .replace(/([^\n])\n(-\s|\d+\.\s)/g, '$1\n\n$2')
       .trim();
   });
   return normalized
@@ -2112,7 +2137,7 @@ const generateProfessionalReply = async (
   const intent = detectIntent(trimmedInput);
   const realtimeSearchRequested = needsRealtimeSearch(trimmedInput);
   const cacheScope = conversationKey || `${scope}:anonymous`;
-  const cacheKey = `${cacheScope}:${normalizedPrompt}`;
+  const cacheKey = `${cacheScope}:${RESPONSE_STYLE_VERSION}:${normalizedPrompt}`;
   const cached = timeSensitive ? undefined : aiResponseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     const vettedCached = enforceProfessionalReplyQuality(trimmedInput, cached.text, conversationKey);
