@@ -9,6 +9,7 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "vite",
     "start": "cd backend && npm start",
+    "migrate": "npm --prefix backend run prisma:deploy || echo \"Prisma migrate deploy failed, continuing.\"",
     "build": "npm run build:frontend && npm run build:backend",
     "build:frontend": "vite build",
     "build:backend": "cd backend && npm run build",

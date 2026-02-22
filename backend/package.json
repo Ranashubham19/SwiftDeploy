@@ -7,15 +7,17 @@
     "dev": "node --import ./env-preload.mjs --loader ts-node/esm --experimental-specifier-resolution=node src/index.ts",
     "dev:legacy": "node --import ./env-preload.mjs --loader ts-node/esm --experimental-specifier-resolution=node server.ts",
     "dev:discord": "node --import ./env-preload.mjs --loader ts-node/esm --experimental-specifier-resolution=node discordBot.ts",
-    "build": "npm run prisma:generate && tsc -p tsconfig.bot.json",
+    "build": "npm run prisma:generate && tsc -p tsconfig.bot.json && tsc",
     "build:legacy": "tsc",
     "start": "node --import ./env-preload.mjs dist-bot/index.js",
     "start:legacy": "node --import ./env-preload.mjs dist/server.js",
+    "start:bot": "node --import ./env-preload.mjs dist-bot/index.js",
     "start:discord": "node --import ./env-preload.mjs dist/discordBot.js",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
-    "start:railway": "npm run prisma:deploy || echo 'Prisma migrate deploy failed, starting server anyway'; npm run start"
+    "start:railway": "npm run prisma:deploy || echo 'Prisma migrate deploy failed, starting server anyway'; npm run start:legacy",
+    "start:railway:bot": "npm run prisma:deploy || echo 'Prisma migrate deploy failed, starting server anyway'; npm run start:bot"
   },
   "engines": {
     "node": ">=18.x"
