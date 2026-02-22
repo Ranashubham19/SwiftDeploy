@@ -482,7 +482,11 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       let finalized = false;
       let stopped = false;
       let activeModelId = route.modelId;
-      const fallbackModelId = (process.env.FALLBACK_MODEL || "").trim();
+      const fallbackModelId = (
+        process.env.FALLBACK_MODEL ||
+        process.env.DEFAULT_MODEL ||
+        "openrouter/auto"
+      ).trim();
 
       const callWithFallback = async <T>(
         operation: (modelId: string) => Promise<T>,
@@ -648,7 +652,12 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         if (isAbortError(error)) {
           stopped = true;
         } else {
-          throw error;
+          logger.error(
+            { error: error instanceof Error ? error.stack : String(error), model: activeModelId },
+            "Model generation failed",
+          );
+          outputBuffer =
+            "I could not reach the selected AI model right now. Please try /model auto and send your message again.";
         }
       } finally {
         typingStop();

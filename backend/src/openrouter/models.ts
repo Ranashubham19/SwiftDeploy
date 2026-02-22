@@ -30,7 +30,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   fast: {
     key: "fast",
     label: "Fast",
-    id: fromEnv("MODEL_FAST_ID", "openai/gpt-4o-mini"),
+    id: fromEnv("MODEL_FAST_ID", "openrouter/auto"),
     description: "Low-latency general assistant.",
     temperature: 0.45,
     maxTokens: 900,
