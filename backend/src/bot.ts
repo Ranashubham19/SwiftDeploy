@@ -14,10 +14,10 @@ import { buildSystemPrompt } from "./openrouter/prompts.js";
 import { TOOL_SCHEMAS, executeTool, shouldEnableTools } from "./tools/tools.js";
 import { logger } from "./utils/logger.js";
 import { chunkText } from "./utils/chunking.js";
-import { toTelegramMarkdownV2 } from "./utils/markdown.js";
 import { DatabaseRateLimiter } from "./utils/rateLimit.js";
 import { DbLockManager } from "./utils/locks.js";
 import { isAbortError } from "./utils/errors.js";
+import { formatProfessionalReply } from "./utils/responseFormat.js";
 
 type BotBuildOptions = {
   token: string;
@@ -33,6 +33,10 @@ type BotBuildOptions = {
 
 const RECENT_CONTEXT_MESSAGES = 12;
 const TELEGRAM_CHUNK_LIMIT = 3500;
+const REPLY_STICKER_IDS = (process.env.TG_STICKER_REPLY_IDS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 type BotContext = Context;
 
@@ -124,30 +128,26 @@ const createSettingsKeyboard = () =>
     [Markup.button.callback("Switch model", "action:switch-model")],
   ]);
 
-const safeReplyMarkdown = async (
+const safeReplyText = async (
   ctx: BotContext,
   text: string,
-) => {
-  const markdown = toTelegramMarkdownV2(text);
+): Promise<void> => {
   try {
-    return await ctx.reply(markdown, {
-      parse_mode: "MarkdownV2",
+    await ctx.reply(text, {
       link_preview_options: { is_disabled: true },
     });
   } catch {
-    return await ctx.reply(text);
+    await ctx.reply(text).catch(() => {});
   }
 };
 
-const safeEditMarkdown = async (
+const safeEditText = async (
   ctx: BotContext,
   messageId: number,
   text: string,
 ): Promise<void> => {
-  const markdown = toTelegramMarkdownV2(text);
   try {
-    await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, markdown, {
-      parse_mode: "MarkdownV2",
+    await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, text, {
       link_preview_options: { is_disabled: true },
     });
   } catch {
@@ -155,6 +155,13 @@ const safeEditMarkdown = async (
       await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, text);
     } catch {}
   }
+};
+
+const sendReplySticker = async (ctx: BotContext): Promise<void> => {
+  if (REPLY_STICKER_IDS.length === 0) return;
+  const stickerId =
+    REPLY_STICKER_IDS[Math.floor(Math.random() * REPLY_STICKER_IDS.length)];
+  await ctx.replyWithSticker(stickerId).catch(() => {});
 };
 
 const simulateStreaming = async (
@@ -510,7 +517,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         lastEditAt = now;
         const preview = outputBuffer.slice(0, TELEGRAM_CHUNK_LIMIT);
         if (!preview.trim()) return;
-        await safeEditMarkdown(ctx, placeholder.message_id, preview);
+        await safeEditText(ctx, placeholder.message_id, preview);
       };
 
       const controller = new AbortController();
@@ -658,14 +665,24 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
           "I hit an issue generating a reply. Please try again in a moment.";
       }
 
+      outputBuffer = formatProfessionalReply(outputBuffer);
+
       const chunks = chunkText(outputBuffer, TELEGRAM_CHUNK_LIMIT);
       if (chunks.length === 0) {
         chunks.push(outputBuffer);
       }
 
-      await safeEditMarkdown(ctx, placeholder.message_id, chunks[0]);
+      await safeEditText(ctx, placeholder.message_id, chunks[0]);
       for (let i = 1; i < chunks.length; i += 1) {
-        await safeReplyMarkdown(ctx, chunks[i]);
+        await safeReplyText(ctx, chunks[i]);
+      }
+
+      const shouldSendSticker =
+        REPLY_STICKER_IDS.length > 0 &&
+        !/issue generating a reply/i.test(outputBuffer) &&
+        Math.random() < 0.35;
+      if (shouldSendSticker) {
+        await sendReplySticker(ctx);
       }
 
       finalized = true;

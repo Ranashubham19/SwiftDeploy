@@ -121,6 +121,7 @@ Inline actions:
 - `MAX_INPUT_CHARS`: max message input length
 - `MAX_OUTPUT_TOKENS`: max generated tokens
 - `STREAM_EDIT_INTERVAL_MS`: Telegram edit throttle
+- `TG_STICKER_REPLY_IDS`: optional comma-separated sticker file IDs for professional reply stickers
 
 ## Model Routing
 
@@ -149,6 +150,7 @@ Special Python disambiguation:
 - Per-chat DB lock prevents concurrency races
 - Per-user rate limit: 20 messages / 10 min
 - Robust errors for users, full server logging with `pino`
+- Response formatter enforces readable plain text with clean spacing and numbered lists
 
 ## Troubleshooting
 
