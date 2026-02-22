@@ -11,10 +11,6 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   const [selectedModel, setSelectedModel] = useState<string>('gpt-5-2');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>(Platform.TELEGRAM);
 
-  const scrollToSection = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
-  };
-
   const handleDeploymentInit = () => {
     if (user) {
       if (selectedPlatform === Platform.TELEGRAM) {
@@ -35,10 +31,12 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
           <BrandLogo />
         </div>
         
-        <div className="hidden lg:flex items-center gap-10">
-          <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="text-sm font-bold text-white uppercase tracking-widest">Home</button>
-          <button onClick={() => scrollToSection('features')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Features</button>
-          <button onClick={() => scrollToSection('contact')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Contact</button>
+        <div className="hidden lg:flex items-center gap-4 text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-400">
+          <span>Precision AI Operations</span>
+          <span className="text-zinc-600">•</span>
+          <span>Enterprise Grade Security</span>
+          <span className="text-zinc-600">•</span>
+          <span>Rapid Agent Provisioning</span>
         </div>
 
         <div className="flex items-center gap-4">
