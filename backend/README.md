@@ -118,6 +118,7 @@ Inline actions:
 - `ADMIN_TELEGRAM_IDS`: optional CSV for admin-only behavior
 - `DEFAULT_MODEL`: default model key/id
 - `FALLBACK_MODEL`: model fallback ID
+- `OPENROUTER_FALLBACK_MODELS`: optional CSV of extra model IDs to try automatically on failure
 - `MAX_INPUT_CHARS`: max message input length
 - `MAX_OUTPUT_TOKENS`: max generated tokens
 - `STREAM_EDIT_INTERVAL_MS`: Telegram edit throttle
@@ -157,6 +158,11 @@ Special Python disambiguation:
 ### 429 / provider overload
 - Bot retries with exponential backoff on `429` and `5xx`.
 - If persistent, reduce request rate or switch to a cheaper/faster model.
+
+### OpenRouter auth/credits errors
+- `401/403`: invalid or revoked `OPENROUTER_API_KEY`.
+- `402`: insufficient OpenRouter credits.
+- The bot now reports these explicitly in Telegram and auto-tries configured fallback models.
 
 ### Telegram markdown parse errors
 - Markdown is escaped before send/edit.

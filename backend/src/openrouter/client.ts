@@ -97,15 +97,27 @@ type OpenRouterClientConfig = {
 };
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const DEFAULT_OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 const sleep = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
 };
 
 const normalizeEndpoint = (baseUrl: string): string => {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (trimmed.endsWith("/chat/completions")) return trimmed;
-  return `${trimmed}/chat/completions`;
+  const raw = baseUrl.trim();
+  const withProtocol = /^https?:\/\//i.test(raw)
+    ? raw
+    : `${DEFAULT_OPENROUTER_BASE}`;
+  const trimmed = withProtocol.replace(/\/+$/, "");
+  const candidate = trimmed.endsWith("/chat/completions")
+    ? trimmed
+    : `${trimmed}/chat/completions`;
+
+  try {
+    return new URL(candidate).toString();
+  } catch {
+    return `${DEFAULT_OPENROUTER_BASE}/chat/completions`;
+  }
 };
 
 const parseUsage = (
@@ -336,7 +348,11 @@ export class OpenRouterClient {
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       if (signal?.aborted) {
-        throw new Error("OpenRouter request aborted.");
+        const abortError = new Error("OpenRouter request aborted.") as Error & {
+          name: string;
+        };
+        abortError.name = "AbortError";
+        throw abortError;
       }
 
       try {

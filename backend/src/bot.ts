@@ -179,6 +179,71 @@ const simulateStreaming = async (
   }
 };
 
+type StatusError = Error & { status?: number };
+
+const extractErrorStatus = (error: unknown): number | null => {
+  const status = (error as StatusError | undefined)?.status;
+  return typeof status === "number" ? status : null;
+};
+
+const describeGenerationError = (error: unknown): string => {
+  const status = extractErrorStatus(error);
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (status === 401 || status === 403 || normalized.includes("unauthorized")) {
+    return "OpenRouter authentication failed. Please update OPENROUTER_API_KEY in Railway and redeploy.";
+  }
+  if (
+    status === 402 ||
+    normalized.includes("insufficient credits") ||
+    normalized.includes("insufficient_quota") ||
+    normalized.includes("payment required") ||
+    normalized.includes("billing")
+  ) {
+    return "OpenRouter credits are insufficient. Please add credits or switch to a free model, then try again.";
+  }
+  if (status === 429 || normalized.includes("rate limit")) {
+    return "OpenRouter rate limit is active right now. Please wait 30-60 seconds and retry.";
+  }
+  if (
+    normalized.includes("fetch failed") ||
+    normalized.includes("network") ||
+    normalized.includes("enotfound") ||
+    normalized.includes("econnreset")
+  ) {
+    return "Network issue while contacting OpenRouter. Please retry in a moment.";
+  }
+  return "I could not reach the selected AI model right now. Please try /model auto and send your message again.";
+};
+
+const parseModelCsv = (csv: string): string[] =>
+  csv
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+const buildModelAttempts = (primaryModelId: string, fallbackModelId: string): string[] => {
+  const fromEnvPool = parseModelCsv(
+    (process.env.OPENROUTER_FALLBACK_MODELS || process.env.OPENROUTER_MODELS || "").trim(),
+  );
+  const ordered = [
+    primaryModelId,
+    fallbackModelId,
+    (process.env.DEFAULT_MODEL || "").trim(),
+    "openrouter/auto",
+    ...fromEnvPool,
+  ].filter(Boolean);
+
+  const unique: string[] = [];
+  for (const modelId of ordered) {
+    if (!unique.includes(modelId)) {
+      unique.push(modelId);
+    }
+  }
+  return unique;
+};
+
 export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
   const bot = new Telegraf<BotContext>(options.token);
   const activeStreams = new Map<string, AbortController>();
@@ -491,27 +556,37 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       const callWithFallback = async <T>(
         operation: (modelId: string) => Promise<T>,
       ): Promise<T> => {
-        try {
-          return await operation(activeModelId);
-        } catch (error) {
-          if (
-            isAbortError(error) ||
-            !fallbackModelId ||
-            fallbackModelId === activeModelId
-          ) {
-            throw error;
+        const attempts = buildModelAttempts(activeModelId, fallbackModelId);
+        let lastError: unknown;
+
+        for (const modelId of attempts) {
+          try {
+            activeModelId = modelId;
+            return await operation(modelId);
+          } catch (error) {
+            if (isAbortError(error)) {
+              throw error;
+            }
+
+            lastError = error;
+            const status = extractErrorStatus(error);
+            logger.warn(
+              {
+                modelId,
+                status,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              "Model attempt failed",
+            );
+
+            // Auth/billing errors are account-level, trying more models will not help.
+            if (status === 401 || status === 402 || status === 403) {
+              break;
+            }
           }
-          logger.warn(
-            {
-              fromModel: activeModelId,
-              fallbackModel: fallbackModelId,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            "Primary model failed, retrying with fallback model",
-          );
-          activeModelId = fallbackModelId;
-          return operation(activeModelId);
         }
+
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
       };
 
       const flush = async (force = false): Promise<void> => {
@@ -652,12 +727,16 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         if (isAbortError(error)) {
           stopped = true;
         } else {
+          const status = extractErrorStatus(error);
           logger.error(
-            { error: error instanceof Error ? error.stack : String(error), model: activeModelId },
+            {
+              error: error instanceof Error ? error.stack : String(error),
+              status,
+              model: activeModelId,
+            },
             "Model generation failed",
           );
-          outputBuffer =
-            "I could not reach the selected AI model right now. Please try /model auto and send your message again.";
+          outputBuffer = describeGenerationError(error);
         }
       } finally {
         typingStop();
