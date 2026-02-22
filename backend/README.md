@@ -133,6 +133,9 @@ Inline actions:
 - `MAX_CONTINUATION_ROUNDS`: auto-continuation rounds when model stops due token length
 - `TG_STICKER_REPLY_IDS`: optional comma-separated sticker file IDs for professional reply stickers
 - `TG_STICKER_REPLY_PROBABILITY`: sticker send probability from 0 to 1 (default 1)
+- `TYPEWRITER_FALLBACK_ENABLED`: if true, non-stream providers are rendered with a typewriter effect
+- `TYPEWRITER_CHARS_PER_TICK`: characters revealed per typewriter update
+- `TYPEWRITER_TICK_MS`: delay between typewriter updates
 
 ## Model Routing
 
@@ -163,6 +166,7 @@ Special Python disambiguation:
 - Robust errors for users, full server logging with `pino`
 - Response formatter enforces readable plain text with clean spacing and numbered lists
 - If a model stops due token limit, bot automatically requests continuation to complete the answer
+- If no sticker IDs are configured, bot uses an animated Telegram dice sticker fallback
 
 ## Troubleshooting
 

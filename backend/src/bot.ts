@@ -47,6 +47,16 @@ const MAX_CONTINUATION_ROUNDS = Math.max(
 );
 const detailedPromptPattern =
   /\b(explain|detailed|detail|step by step|deep dive|comprehensive|teach|breakdown|why|how)\b/i;
+const TYPEWRITER_FALLBACK_ENABLED =
+  (process.env.TYPEWRITER_FALLBACK_ENABLED || "true").toLowerCase() !== "false";
+const TYPEWRITER_CHARS_PER_TICK = Math.max(
+  12,
+  Math.min(180, Number(process.env.TYPEWRITER_CHARS_PER_TICK || "52")),
+);
+const TYPEWRITER_TICK_MS = Math.max(
+  8,
+  Math.min(80, Number(process.env.TYPEWRITER_TICK_MS || "14")),
+);
 
 type BotContext = Context;
 
@@ -151,6 +161,25 @@ const safeReplyText = async (
   }
 };
 
+const safeReplyAndGetMessageId = async (
+  ctx: BotContext,
+  text: string,
+): Promise<number | null> => {
+  try {
+    const response = await ctx.reply(text, {
+      link_preview_options: { is_disabled: true },
+    });
+    return (response as { message_id?: number })?.message_id ?? null;
+  } catch {
+    try {
+      const response = await ctx.reply(text);
+      return (response as { message_id?: number })?.message_id ?? null;
+    } catch {
+      return null;
+    }
+  }
+};
+
 const safeEditText = async (
   ctx: BotContext,
   messageId: number,
@@ -168,10 +197,13 @@ const safeEditText = async (
 };
 
 const sendReplySticker = async (ctx: BotContext): Promise<void> => {
-  if (REPLY_STICKER_IDS.length === 0) return;
-  const stickerId =
-    REPLY_STICKER_IDS[Math.floor(Math.random() * REPLY_STICKER_IDS.length)];
-  await ctx.replyWithSticker(stickerId).catch(() => {});
+  if (REPLY_STICKER_IDS.length > 0) {
+    const stickerId =
+      REPLY_STICKER_IDS[Math.floor(Math.random() * REPLY_STICKER_IDS.length)];
+    await ctx.replyWithSticker(stickerId).catch(() => {});
+    return;
+  }
+  await ctx.replyWithDice({ emoji: "🎯" }).catch(() => {});
 };
 
 const simulateStreaming = async (
@@ -186,6 +218,31 @@ const simulateStreaming = async (
     }
     await onDelta(chunk);
     await new Promise((resolve) => setTimeout(resolve, 16));
+  }
+};
+
+const runTypewriterEdit = async (
+  ctx: BotContext,
+  messageId: number,
+  text: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const full = text.trim();
+  if (!full) {
+    await safeEditText(ctx, messageId, text);
+    return;
+  }
+
+  let cursor = 0;
+  while (cursor < full.length) {
+    if (signal?.aborted) {
+      throw new Error("aborted");
+    }
+    cursor = Math.min(full.length, cursor + TYPEWRITER_CHARS_PER_TICK);
+    await safeEditText(ctx, messageId, full.slice(0, cursor));
+    if (cursor < full.length) {
+      await new Promise((resolve) => setTimeout(resolve, TYPEWRITER_TICK_MS));
+    }
   }
 };
 
@@ -512,9 +569,14 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
 
       const refreshedBefore = await options.store.refreshChat(chatInfo.chat.id);
       if (refreshedBefore) {
-        await options.summarizer.summarizeIfNeeded(refreshedBefore);
+        void options.summarizer.summarizeIfNeeded(refreshedBefore).catch((error) => {
+          logger.warn(
+            { chatId: chatInfo.chat.id, error: error instanceof Error ? error.message : String(error) },
+            "Background summarization failed",
+          );
+        });
       }
-      const currentChat = (await options.store.refreshChat(chatInfo.chat.id)) ?? chatInfo.chat;
+      const currentChat = refreshedBefore ?? chatInfo.chat;
 
       const memories = await options.store.getMemories(chatInfo.chat.id);
       const recentMessages = await options.store.getRecentMessages(
@@ -577,6 +639,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       let lastEditAt = 0;
       let finalized = false;
       let stopped = false;
+      let sawLiveDelta = false;
       let activeModelId = route.modelId;
       const fallbackModelId = (
         process.env.FALLBACK_MODEL ||
@@ -723,6 +786,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
 
         if (precomputedText) {
           await simulateStreaming(precomputedText, controller.signal, async (delta) => {
+            sawLiveDelta = true;
             outputBuffer += delta;
             await flush(false);
           });
@@ -735,9 +799,10 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
                   temperature: currentChat.temperature ?? route.temperature,
                   max_tokens: responseTokenLimit,
                 },
-                {
-                  signal: controller.signal,
+              {
+                signal: controller.signal,
                 onDelta: async (delta) => {
+                  sawLiveDelta = true;
                   outputBuffer += delta;
                   await flush(false);
                 },
@@ -842,9 +907,21 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         chunks.push(outputBuffer);
       }
 
-      await safeEditText(ctx, placeholder.message_id, chunks[0]);
-      for (let i = 1; i < chunks.length; i += 1) {
-        await safeReplyText(ctx, chunks[i]);
+      if (TYPEWRITER_FALLBACK_ENABLED && !sawLiveDelta) {
+        await runTypewriterEdit(ctx, placeholder.message_id, chunks[0], controller.signal);
+        for (let i = 1; i < chunks.length; i += 1) {
+          const messageId = await safeReplyAndGetMessageId(ctx, "...");
+          if (messageId) {
+            await runTypewriterEdit(ctx, messageId, chunks[i], controller.signal);
+          } else {
+            await safeReplyText(ctx, chunks[i]);
+          }
+        }
+      } else {
+        await safeEditText(ctx, placeholder.message_id, chunks[0]);
+        for (let i = 1; i < chunks.length; i += 1) {
+          await safeReplyText(ctx, chunks[i]);
+        }
       }
 
       const shouldSendSticker =
