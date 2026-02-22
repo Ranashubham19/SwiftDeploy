@@ -6,22 +6,25 @@ dockerfilePath = "Dockerfile"
 
 [variables]
 TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @BotFather" }
-GOOGLE_CLIENT_ID = { required = true, description = "Google OAuth Client ID" }
-GOOGLE_CLIENT_SECRET = { required = true, description = "Google OAuth Client Secret" }
-SESSION_SECRET = { required = true, description = "Session secret for express-session" }
-AI_PROVIDER = { required = false, description = "Primary AI provider (gemini/sarvam/openrouter/openai/anthropic/moonshot)" }
-GEMINI_API_KEY = { required = false, description = "Google AI Studio API key for Gemini" }
-GEMINI_MODEL = { required = false, description = "Gemini model identifier (default: gemini-3-flash-preview)" }
-MOONSHOT_API_KEY = { required = false, description = "API key for Moonshot-compatible endpoint (including NVIDIA Integrate)" }
-MOONSHOT_MODEL = { required = false, description = "Moonshot-compatible model id (example: moonshotai/kimi-k2.5)" }
-MOONSHOT_BASE_URL = { required = false, description = "Moonshot-compatible chat completions endpoint URL" }
-MOONSHOT_THINKING = { required = false, description = "Enable reasoning/thinking mode for compatible endpoints (true/false)" }
-SARVAM_API_KEYS = { required = false, description = "Comma-separated Sarvam API keys for primary routing" }
-SARVAM_MODEL = { required = false, description = "Sarvam model identifier (default: sarvam-m)" }
-SARVAM_BASE_URL = { required = false, description = "Sarvam chat completions endpoint URL" }
+OPENROUTER_API_KEY = { required = true, description = "OpenRouter API key" }
+DATABASE_URL = { required = true, description = "PostgreSQL connection string" }
+APP_URL = { required = false, description = "Public Railway URL used for Telegram webhook" }
+OPENROUTER_BASE_URL = { required = false, description = "OpenRouter base URL (default: https://openrouter.ai/api/v1)" }
+DEFAULT_MODEL = { required = false, description = "Default model key/id (default: openrouter/auto)" }
+FALLBACK_MODEL = { required = false, description = "Fallback model id" }
+MAX_INPUT_CHARS = { required = false, description = "Max Telegram input chars per message" }
+MAX_OUTPUT_TOKENS = { required = false, description = "Max OpenRouter output tokens" }
+STREAM_EDIT_INTERVAL_MS = { required = false, description = "Streaming edit throttle interval for Telegram message edits" }
+MODEL_FAST_ID = { required = false, description = "Override fast model id" }
+MODEL_SMART_ID = { required = false, description = "Override smart model id" }
+MODEL_CODE_ID = { required = false, description = "Override code model id" }
+MODEL_MATH_ID = { required = false, description = "Override math model id" }
+MODEL_VISION_ID = { required = false, description = "Override vision model id" }
+SUMMARY_MODEL = { required = false, description = "Model id used for running summary updates" }
+LOG_LEVEL = { required = false, description = "pino log level (info/debug/warn/error)" }
 
 [deploy]
-startCommand = "node --import ./backend/env-preload.mjs backend/dist/server.js"
+startCommand = "npm --prefix backend run start:railway"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 numReplicas = 1

@@ -94,3 +94,7 @@ For a complete setup with frontend on Vercel and backend on Railway:
 
 ## 📋 Required Environment Variables
 See `.env.example` for a complete list of required environment variables for production deployment.
+
+## Telegram OpenRouter Bot Docs
+For the new ChatGPT-style Telegram bot implementation (Telegraf + OpenRouter + Prisma), see:
+- `backend/README.md`

@@ -16,8 +16,9 @@ ENV NODE_ENV=production
 
 COPY --from=build /app/backend/package*.json ./backend/
 COPY --from=build /app/backend/node_modules ./backend/node_modules
-COPY --from=build /app/backend/dist ./backend/dist
+COPY --from=build /app/backend/dist-bot ./backend/dist-bot
+COPY --from=build /app/backend/prisma ./backend/prisma
 COPY --from=build /app/backend/env-preload.mjs ./backend/env-preload.mjs
 
 EXPOSE 4000
-CMD ["node", "--import", "./backend/env-preload.mjs", "backend/dist/server.js"]
+CMD ["npm", "--prefix", "backend", "run", "start:railway"]

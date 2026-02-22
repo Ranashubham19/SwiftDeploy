@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+enum Verbosity {
+  CONCISE
+  NORMAL
+  DETAILED
+}
+
+model Chat {
+  id                  Int       @id @default(autoincrement())
+  telegramChatId      String    @unique
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  currentModel        String    @default("auto")
+  temperature         Float     @default(0.4)
+  verbosity           Verbosity @default(NORMAL)
+  stylePrompt         String?
+  summaryText         String?
+  summaryMessageCount Int       @default(0)
+  messages            Message[]
+  memories            Memory[]
+  lock                ChatLock?
+}
+
+model Message {
+  id         Int         @id @default(autoincrement())
+  chatId     Int
+  role       MessageRole
+  content    String
+  name       String?
+  toolCallId String?
+  createdAt  DateTime    @default(now())
+  chat       Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+}
+
+model Memory {
+  id        Int      @id @default(autoincrement())
+  chatId    Int
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, key])
+  @@index([chatId])
+}
+
+model ChatLock {
+  chatId    Int      @id
+  owner     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model RateLimitEvent {
+  id        Int      @id @default(autoincrement())
+  bucketKey String
+  createdAt DateTime @default(now())
+
+  @@index([bucketKey, createdAt])
+}

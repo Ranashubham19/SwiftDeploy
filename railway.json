@@ -4,7 +4,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "node --import ./backend/env-preload.mjs backend/dist/server.js",
+    "startCommand": "npm --prefix backend run start:railway",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300
   }
