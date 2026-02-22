@@ -96,23 +96,30 @@ app.post("/webhook", async (req, res) => {
 const server = app.listen(PORT, "0.0.0.0", async () => {
   logger.info({ port: PORT }, "Telegram bot server started");
 
-  await bot.telegram.setMyCommands([
-    { command: "start", description: "Start bot and onboarding" },
-    { command: "help", description: "Show command help" },
-    { command: "reset", description: "Reset chat history" },
-    { command: "model", description: "Show or switch model" },
-    { command: "settings", description: "Configure temperature and verbosity" },
-    { command: "export", description: "Export conversation data" },
-    { command: "stop", description: "Stop active streaming response" },
-  ]);
+  try {
+    await bot.telegram.setMyCommands([
+      { command: "start", description: "Start bot and onboarding" },
+      { command: "help", description: "Show command help" },
+      { command: "reset", description: "Reset chat history" },
+      { command: "model", description: "Show or switch model" },
+      { command: "settings", description: "Configure temperature and verbosity" },
+      { command: "export", description: "Export conversation data" },
+      { command: "stop", description: "Stop active streaming response" },
+    ]);
 
-  if (APP_URL) {
-    const webhookUrl = `${APP_URL}/webhook`;
-    await bot.telegram.setWebhook(webhookUrl);
-    logger.info({ webhookUrl }, "Webhook mode enabled");
-  } else {
-    await bot.launch();
-    logger.info("Long-polling mode enabled (APP_URL not set)");
+    if (APP_URL) {
+      const webhookUrl = `${APP_URL}/webhook`;
+      await bot.telegram.setWebhook(webhookUrl);
+      logger.info({ webhookUrl }, "Webhook mode enabled");
+    } else {
+      await bot.launch();
+      logger.info("Long-polling mode enabled (APP_URL not set)");
+    }
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.stack : String(error) },
+      "Telegram startup failed; HTTP server remains online",
+    );
   }
 });
 
