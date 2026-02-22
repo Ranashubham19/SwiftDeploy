@@ -244,6 +244,15 @@ export class OpenRouterClient {
       let finishReason: string | null = null;
       let usage: StreamCompletionResult["usage"] | undefined;
       const toolCallsByIndex = new Map<number, OpenRouterToolCall>();
+      const emitDelta = (delta: string): void => {
+        if (!options.onDelta || !delta) return;
+        try {
+          const maybePromise = options.onDelta(delta);
+          if (maybePromise && typeof (maybePromise as Promise<void>).then === "function") {
+            void (maybePromise as Promise<void>).catch(() => {});
+          }
+        } catch {}
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -284,9 +293,7 @@ export class OpenRouterClient {
             const deltaText = extractDeltaText(choice.delta?.content);
             if (deltaText) {
               text += deltaText;
-              if (options.onDelta) {
-                await options.onDelta(deltaText);
-              }
+              emitDelta(deltaText);
             } else if (typeof choice.message?.content === "string") {
               const messageText = choice.message.content;
               if (messageText.length > messageSnapshot.length) {
@@ -296,9 +303,7 @@ export class OpenRouterClient {
                 messageSnapshot = messageText;
                 if (incrementalText) {
                   text += incrementalText;
-                  if (options.onDelta) {
-                    await options.onDelta(incrementalText);
-                  }
+                  emitDelta(incrementalText);
                 }
               }
             }

@@ -632,6 +632,8 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       let finalized = false;
       let stopped = false;
       let sawLiveDelta = false;
+      let flushInFlight = false;
+      let flushQueued = false;
       let activeModelId = route.modelId;
       const fallbackModelId = (
         process.env.FALLBACK_MODEL ||
@@ -690,11 +692,32 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       const flush = async (force = false): Promise<void> => {
         if (finalized) return;
         const now = Date.now();
-        if (!force && now - lastEditAt < options.streamEditIntervalMs) return;
-        lastEditAt = now;
         const preview = outputBuffer.slice(0, TELEGRAM_CHUNK_LIMIT);
         if (!preview.trim()) return;
+        if (!force && now - lastEditAt < options.streamEditIntervalMs) {
+          flushQueued = true;
+          return;
+        }
+        if (flushInFlight) {
+          flushQueued = true;
+          return;
+        }
+        flushInFlight = true;
+        lastEditAt = now;
         await safeEditText(ctx, placeholder.message_id, preview);
+        flushInFlight = false;
+        if (flushQueued && !finalized) {
+          flushQueued = false;
+          void flush(false);
+        }
+      };
+
+      const waitForFlushIdle = async (): Promise<void> => {
+        let guard = 0;
+        while (flushInFlight && guard < 24) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          guard += 1;
+        }
       };
 
       const controller = new AbortController();
@@ -780,7 +803,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
           await simulateStreaming(precomputedText, controller.signal, async (delta) => {
             sawLiveDelta = true;
             outputBuffer += delta;
-            await flush(false);
+            void flush(false);
           });
         } else {
           const streamResult = await callWithFallback((modelId) =>
@@ -793,10 +816,10 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
                 },
               {
                 signal: controller.signal,
-                onDelta: async (delta) => {
+                onDelta: (delta) => {
                   sawLiveDelta = true;
                   outputBuffer += delta;
-                  await flush(false);
+                  void flush(false);
                 },
               },
             ),
@@ -899,6 +922,9 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         chunks.push(outputBuffer);
       }
 
+      finalized = true;
+      await waitForFlushIdle();
+
       if (TYPEWRITER_FALLBACK_ENABLED && !sawLiveDelta) {
         await runTypewriterEdit(ctx, placeholder.message_id, chunks[0], controller.signal);
         for (let i = 1; i < chunks.length; i += 1) {
@@ -923,7 +949,6 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         await sendReplySticker(ctx);
       }
 
-      finalized = true;
       await options.store.appendMessage(chatInfo.chat.id, {
         role: MessageRole.ASSISTANT,
         content: outputBuffer,
