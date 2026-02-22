@@ -37,6 +37,16 @@ const REPLY_STICKER_IDS = (process.env.TG_STICKER_REPLY_IDS || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+const REPLY_STICKER_PROBABILITY = Math.max(
+  0,
+  Math.min(1, Number(process.env.TG_STICKER_REPLY_PROBABILITY || "1")),
+);
+const MAX_CONTINUATION_ROUNDS = Math.max(
+  0,
+  Math.min(2, Number(process.env.MAX_CONTINUATION_ROUNDS || "1")),
+);
+const detailedPromptPattern =
+  /\b(explain|detailed|detail|step by step|deep dive|comprehensive|teach|breakdown|why|how)\b/i;
 
 type BotContext = Context;
 
@@ -169,13 +179,13 @@ const simulateStreaming = async (
   signal: AbortSignal | undefined,
   onDelta: (value: string) => Promise<void>,
 ): Promise<void> => {
-  const chunks = text.match(/.{1,48}/g) ?? [text];
+  const chunks = text.match(/.{1,72}/g) ?? [text];
   for (const chunk of chunks) {
     if (signal?.aborted) {
       throw new Error("aborted");
     }
     await onDelta(chunk);
-    await new Promise((resolve) => setTimeout(resolve, 35));
+    await new Promise((resolve) => setTimeout(resolve, 16));
   }
 };
 
@@ -242,6 +252,27 @@ const buildModelAttempts = (primaryModelId: string, fallbackModelId: string): st
     }
   }
   return unique;
+};
+
+const computeResponseTokenLimit = (
+  inputText: string,
+  routeMaxTokens: number,
+  globalMaxTokens: number,
+  verbosity: "concise" | "normal" | "detailed",
+): number => {
+  const base = Math.min(routeMaxTokens, globalMaxTokens);
+  const isDetailedRequest = verbosity === "detailed" || detailedPromptPattern.test(inputText);
+  const isShortPrompt = inputText.trim().length < 80 && !isDetailedRequest;
+
+  if (isShortPrompt) {
+    return Math.max(260, Math.min(base, 560));
+  }
+
+  if (isDetailedRequest) {
+    return Math.min(globalMaxTokens, Math.max(base, Math.min(2000, globalMaxTokens)));
+  }
+
+  return base;
 };
 
 export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
@@ -552,6 +583,18 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         process.env.DEFAULT_MODEL ||
         "openrouter/free"
       ).trim();
+      const responseTokenLimit = computeResponseTokenLimit(
+        trimmedInput,
+        route.maxTokens,
+        options.maxOutputTokens,
+        currentChat.verbosity,
+      );
+      let wasTruncatedByTokens = false;
+      const markIfTruncated = (finishReason: string | null | undefined): void => {
+        if ((finishReason || "").toLowerCase() === "length") {
+          wasTruncatedByTokens = true;
+        }
+      };
 
       const callWithFallback = async <T>(
         operation: (modelId: string) => Promise<T>,
@@ -618,13 +661,14 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
                   model: modelId,
                   messages: messagesForFinal,
                   temperature: route.temperature,
-                  max_tokens: Math.min(options.maxOutputTokens, 700),
+                  max_tokens: Math.min(responseTokenLimit, 900),
                   tools: TOOL_SCHEMAS,
                   tool_choice: "auto",
                 },
                 { signal: controller.signal },
               ),
             );
+            markIfTruncated(decision.finishReason);
 
             if (!decision.toolCalls.length) {
               precomputedText = decision.content || null;
@@ -685,14 +729,14 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         } else {
           const streamResult = await callWithFallback((modelId) =>
             options.openRouter.streamChatCompletion(
-              {
-                model: modelId,
-                messages: messagesForFinal,
-                temperature: currentChat.temperature ?? route.temperature,
-                max_tokens: Math.min(route.maxTokens, options.maxOutputTokens),
-              },
-              {
-                signal: controller.signal,
+                {
+                  model: modelId,
+                  messages: messagesForFinal,
+                  temperature: currentChat.temperature ?? route.temperature,
+                  max_tokens: responseTokenLimit,
+                },
+                {
+                  signal: controller.signal,
                 onDelta: async (delta) => {
                   outputBuffer += delta;
                   await flush(false);
@@ -700,6 +744,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
               },
             ),
           );
+          markIfTruncated(streamResult.finishReason);
 
           if (!outputBuffer.trim() && streamResult.text.trim()) {
             outputBuffer = streamResult.text;
@@ -713,13 +758,50 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
                   model: modelId,
                   messages: messagesForFinal,
                   temperature: currentChat.temperature ?? route.temperature,
-                  max_tokens: Math.min(route.maxTokens, options.maxOutputTokens),
+                  max_tokens: responseTokenLimit,
                 },
                 { signal: controller.signal },
               ),
             );
+            markIfTruncated(backupResult.finishReason);
             if (backupResult.content.trim()) {
               outputBuffer = backupResult.content;
+            }
+          }
+        }
+
+        if (!stopped && wasTruncatedByTokens && outputBuffer.trim()) {
+          for (let round = 0; round < MAX_CONTINUATION_ROUNDS; round += 1) {
+            const assistantTail = outputBuffer.slice(-2200);
+            const continuation = await callWithFallback((modelId) =>
+              options.openRouter.chatCompletion(
+                {
+                  model: modelId,
+                  messages: [
+                    ...messagesForFinal,
+                    { role: "assistant", content: assistantTail },
+                    {
+                      role: "user",
+                      content:
+                        "Continue from where your previous answer stopped. Do not repeat earlier content. Finish the remaining points and end cleanly.",
+                    },
+                  ],
+                  temperature: currentChat.temperature ?? route.temperature,
+                  max_tokens: Math.min(responseTokenLimit, 900),
+                },
+                { signal: controller.signal },
+              ),
+            );
+
+            const tail = continuation.content.trim();
+            if (!tail || outputBuffer.includes(tail)) {
+              break;
+            }
+
+            outputBuffer = `${outputBuffer.trimEnd()}\n${tail}`.trim();
+            wasTruncatedByTokens = (continuation.finishReason || "").toLowerCase() === "length";
+            if (!wasTruncatedByTokens) {
+              break;
             }
           }
         }
@@ -768,7 +850,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       const shouldSendSticker =
         REPLY_STICKER_IDS.length > 0 &&
         !/issue generating a reply/i.test(outputBuffer) &&
-        Math.random() < 0.35;
+        Math.random() < REPLY_STICKER_PROBABILITY;
       if (shouldSendSticker) {
         await sendReplySticker(ctx);
       }

@@ -82,7 +82,7 @@ npm run dev
 - For free-only mode, set:
   - `DEFAULT_MODEL=openrouter/free`
   - `FALLBACK_MODEL=openrouter/free`
-  - `MODEL_FAST_ID=openrouter/free`
+  - `MODEL_FAST_ID=meta-llama/llama-3.2-3b-instruct:free`
   - `MODEL_SMART_ID=openai/gpt-oss-120b:free`
   - `MODEL_CODE_ID=qwen/qwen3-coder:free`
   - `MODEL_MATH_ID=deepseek/deepseek-r1-0528:free`
@@ -130,7 +130,9 @@ Inline actions:
 - `MAX_INPUT_CHARS`: max message input length
 - `MAX_OUTPUT_TOKENS`: max generated tokens
 - `STREAM_EDIT_INTERVAL_MS`: Telegram edit throttle
+- `MAX_CONTINUATION_ROUNDS`: auto-continuation rounds when model stops due token length
 - `TG_STICKER_REPLY_IDS`: optional comma-separated sticker file IDs for professional reply stickers
+- `TG_STICKER_REPLY_PROBABILITY`: sticker send probability from 0 to 1 (default 1)
 
 ## Model Routing
 
@@ -160,6 +162,7 @@ Special Python disambiguation:
 - Per-user rate limit: 20 messages / 10 min
 - Robust errors for users, full server logging with `pino`
 - Response formatter enforces readable plain text with clean spacing and numbered lists
+- If a model stops due token limit, bot automatically requests continuation to complete the answer
 
 ## Troubleshooting
 

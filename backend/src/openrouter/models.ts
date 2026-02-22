@@ -25,15 +25,15 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
     id: fromEnv("DEFAULT_MODEL", "openrouter/free"),
     description: "Intent-based automatic routing.",
     temperature: 0.45,
-    maxTokens: 1200,
+    maxTokens: 1600,
   },
   fast: {
     key: "fast",
     label: "Fast",
-    id: fromEnv("MODEL_FAST_ID", "openrouter/free"),
+    id: fromEnv("MODEL_FAST_ID", "meta-llama/llama-3.2-3b-instruct:free"),
     description: "Low-latency general assistant.",
     temperature: 0.45,
-    maxTokens: 900,
+    maxTokens: 1200,
   },
   smart: {
     key: "smart",
@@ -41,7 +41,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
     id: fromEnv("MODEL_SMART_ID", "openai/gpt-oss-120b:free"),
     description: "High quality general reasoning.",
     temperature: 0.4,
-    maxTokens: 1400,
+    maxTokens: 1800,
   },
   code: {
     key: "code",
@@ -49,7 +49,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
     id: fromEnv("MODEL_CODE_ID", "qwen/qwen3-coder:free"),
     description: "Coding, debugging, and architecture.",
     temperature: 0.2,
-    maxTokens: 1600,
+    maxTokens: 2000,
   },
   math: {
     key: "math",
@@ -57,7 +57,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
     id: fromEnv("MODEL_MATH_ID", "deepseek/deepseek-r1-0528:free"),
     description: "Mathematics and step-by-step reasoning.",
     temperature: 0.15,
-    maxTokens: 1500,
+    maxTokens: 2000,
   },
   vision: {
     key: "vision",
@@ -65,7 +65,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
     id: fromEnv("MODEL_VISION_ID", "nvidia/nemotron-nano-12b-v2-vl:free"),
     description: "Image-capable model where supported.",
     temperature: 0.35,
-    maxTokens: 1200,
+    maxTokens: 1400,
   },
 };
 

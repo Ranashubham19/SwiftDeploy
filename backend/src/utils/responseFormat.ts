@@ -6,7 +6,9 @@ const italicPattern = /\*(.*?)\*/g;
 const inlineCodePattern = /`([^`]+)`/g;
 const tableDividerPattern = /^\s*\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?\s*$/;
 const tableRowPattern = /^\s*\|.*\|\s*$/;
-const listItemPattern = /^\s*(?:[-*•]+|\d+[.)])\s+(.*)$/;
+const listItemPattern = /^\s*(?:[-*\u2022]+|\d+[.)]|[a-zA-Z][.)])\s+(.*)$/;
+const numberedPattern = /^\d+\.\s+/;
+const shortHeadingPattern = /^[A-Za-z][A-Za-z0-9 ,()/-]{2,80}:$/;
 
 const normalizeAscii = (input: string): string =>
   input
@@ -89,15 +91,51 @@ const renumberLists = (lines: string[]): string[] => {
   return out;
 };
 
+const addParagraphSpacing = (lines: string[]): string[] => {
+  const out: string[] = [];
+  const lastNonBlank = (): string =>
+    [...out].reverse().find((line) => line.trim().length > 0) || "";
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (out.length > 0 && out[out.length - 1] !== "") {
+        out.push("");
+      }
+      continue;
+    }
+
+    const previous = lastNonBlank();
+    const isNumbered = numberedPattern.test(line);
+    const wasNumbered = numberedPattern.test(previous);
+    const isHeading = shortHeadingPattern.test(line);
+    const wasHeading = shortHeadingPattern.test(previous);
+
+    if (out.length > 0 && out[out.length - 1] !== "") {
+      if (isHeading || (isNumbered && !wasNumbered) || (!isNumbered && wasNumbered && !isHeading)) {
+        out.push("");
+      } else if (!isNumbered && !wasNumbered && !isHeading && !wasHeading) {
+        const previousEndsSentence = /[.!?]$/.test(previous);
+        if (previousEndsSentence && line.length > 90) {
+          out.push("");
+        }
+      }
+    }
+
+    out.push(line);
+  }
+
+  return out;
+};
+
 export const formatProfessionalReply = (input: string): string => {
   const stripped = removeMarkdownArtifacts(input || "");
   const ascii = normalizeAscii(stripped);
 
   const lines = ascii.split("\n");
-  const normalizedLines = renumberLists(lines)
+  const normalizedLines = addParagraphSpacing(renumberLists(lines))
     .map((line) => line.replace(/\s{2,}/g, " ").trimEnd())
     .filter((line, index, arr) => {
-      // Collapse repeated blank lines.
       if (line !== "") return true;
       return index === 0 || arr[index - 1] !== "";
     });

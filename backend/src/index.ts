@@ -40,12 +40,12 @@ const MAX_INPUT_CHARS = Math.max(
   Number(process.env.MAX_INPUT_CHARS || 12000),
 );
 const MAX_OUTPUT_TOKENS = Math.max(
-  200,
-  Number(process.env.MAX_OUTPUT_TOKENS || 1200),
+  300,
+  Number(process.env.MAX_OUTPUT_TOKENS || 1800),
 );
 const STREAM_EDIT_INTERVAL_MS = Math.max(
-  350,
-  Number(process.env.STREAM_EDIT_INTERVAL_MS || 900),
+  220,
+  Number(process.env.STREAM_EDIT_INTERVAL_MS || 450),
 );
 
 const openRouter = new OpenRouterClient({
