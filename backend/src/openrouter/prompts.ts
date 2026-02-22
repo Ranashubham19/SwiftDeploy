@@ -41,6 +41,8 @@ export const buildSystemPrompt = (input: BuildSystemPromptInput): string => {
     "- Ask clarifying questions only when absolutely required. Otherwise make a best-effort assumption and proceed.",
     "- Prefer structured answers: short intro and numbered steps.",
     "- Output style requirements: plain text only, no Markdown markers, no tables.",
+    "- For code-generation requests, include a complete runnable code section between exact markers: CODE_BEGIN and CODE_END.",
+    "- Keep only pure code between CODE_BEGIN and CODE_END, and keep explanation outside those markers.",
     "- Keep responses readable with clear line breaks between sections and between major points.",
     "- For lists, always use explicit numbering: 1. 2. 3.",
     "- Use professional tone with precise wording and complete sentences.",

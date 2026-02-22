@@ -57,6 +57,48 @@ const TYPEWRITER_TICK_MS = Math.max(
   6,
   Math.min(80, Number(process.env.TYPEWRITER_TICK_MS || "8")),
 );
+const CODE_FILE_EXPORT_ENABLED =
+  (process.env.CODE_FILE_EXPORT_ENABLED || "true").toLowerCase() !== "false";
+const CODE_FAST_PATH_ENABLED =
+  (process.env.CODE_FAST_PATH_ENABLED || "true").toLowerCase() !== "false";
+const codeFencePattern = /```([a-zA-Z0-9_#+.-]*)\n([\s\S]*?)```/g;
+const codeMarkerPattern = /CODE_BEGIN\s*\n([\s\S]*?)\nCODE_END/i;
+const codeLanguageMap: Record<string, string> = {
+  js: "javascript",
+  jsx: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  py: "python",
+  csharp: "csharp",
+  "c#": "csharp",
+  cpp: "cpp",
+  "c++": "cpp",
+  shell: "bash",
+  sh: "bash",
+  yml: "yaml",
+};
+const codeExtensionMap: Record<string, string> = {
+  javascript: "js",
+  typescript: "ts",
+  python: "py",
+  java: "java",
+  cpp: "cpp",
+  csharp: "cs",
+  go: "go",
+  rust: "rs",
+  php: "php",
+  ruby: "rb",
+  swift: "swift",
+  kotlin: "kt",
+  sql: "sql",
+  html: "html",
+  css: "css",
+  bash: "sh",
+  json: "json",
+  yaml: "yaml",
+  xml: "xml",
+  text: "txt",
+};
 
 type BotContext = Context;
 
@@ -309,6 +351,132 @@ const buildModelAttempts = (primaryModelId: string, fallbackModelId: string): st
     }
   }
   return unique;
+};
+
+type CodeArtifact = {
+  language: string;
+  extension: string;
+  fileName: string;
+  code: string;
+};
+
+const normalizeCodeLanguage = (value: string): string => {
+  const normalized = value.trim().toLowerCase();
+  return codeLanguageMap[normalized] || normalized || "text";
+};
+
+const inferLanguageFromPrompt = (prompt: string): string => {
+  const tests: Array<{ pattern: RegExp; language: string }> = [
+    { pattern: /\btypescript|\.ts\b/i, language: "typescript" },
+    { pattern: /\bjavascript|node\.?js|react|next\.?js|\.js\b/i, language: "javascript" },
+    { pattern: /\bpython|\.py\b|pip\b/i, language: "python" },
+    { pattern: /\bjava\b|spring\b/i, language: "java" },
+    { pattern: /\bc\+\+|cpp\b/i, language: "cpp" },
+    { pattern: /\bc#|csharp|dotnet|asp\.net\b/i, language: "csharp" },
+    { pattern: /\bgo(lang)?\b/i, language: "go" },
+    { pattern: /\brust\b/i, language: "rust" },
+    { pattern: /\bphp\b/i, language: "php" },
+    { pattern: /\bruby\b/i, language: "ruby" },
+    { pattern: /\bswift\b/i, language: "swift" },
+    { pattern: /\bkotlin\b/i, language: "kotlin" },
+    { pattern: /\bsql\b|select\s+.*\s+from\b/i, language: "sql" },
+    { pattern: /\bhtml\b/i, language: "html" },
+    { pattern: /\bcss\b/i, language: "css" },
+    { pattern: /\bbash\b|\bshell\b|\.sh\b/i, language: "bash" },
+    { pattern: /\byaml\b|\.ya?ml\b/i, language: "yaml" },
+    { pattern: /\bjson\b/i, language: "json" },
+  ];
+
+  for (const test of tests) {
+    if (test.pattern.test(prompt)) return test.language;
+  }
+  return "text";
+};
+
+const isCodeGenerationPrompt = (inputText: string): boolean => {
+  const normalized = inputText.toLowerCase();
+  const wantsCode =
+    /\b(write|generate|create|build|make|give)\b/.test(normalized) &&
+    /\b(code|program|script|function|class|api|bot|algorithm)\b/.test(normalized);
+  const debugLike = /\b(debug|fix|error|bug|stack trace|issue|refactor)\b/.test(normalized);
+  return wantsCode && !debugLike;
+};
+
+const looksLikeCode = (text: string): boolean => {
+  if (!text.trim()) return false;
+  const signalPatterns = [
+    /^\s*(def |class |function |const |let |var |import |from |#include |public class |using |fn |SELECT |INSERT |UPDATE |DELETE |<!DOCTYPE html|<html|apiVersion:)/im,
+    /[{}`;]/,
+    /=>/,
+    /^\s{2,}\S/m,
+  ];
+  return signalPatterns.some((pattern) => pattern.test(text));
+};
+
+const buildCodeFileName = (language: string): string => {
+  const extension = codeExtensionMap[language] || "txt";
+  return `generated_code.${extension}`;
+};
+
+const stripCodeFromDisplay = (text: string): string =>
+  text
+    .replace(codeFencePattern, "")
+    .replace(codeMarkerPattern, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+const extractCodeArtifact = (rawOutput: string, prompt: string): CodeArtifact | null => {
+  const markerMatch = rawOutput.match(codeMarkerPattern);
+  if (markerMatch?.[1]) {
+    const markerCode = markerMatch[1].trim();
+    if (markerCode) {
+      const language = inferLanguageFromPrompt(prompt);
+      const normalizedLanguage = normalizeCodeLanguage(language);
+      const extension = codeExtensionMap[normalizedLanguage] || "txt";
+      return {
+        language: normalizedLanguage,
+        extension,
+        fileName: buildCodeFileName(normalizedLanguage),
+        code: markerCode,
+      };
+    }
+  }
+
+  let bestLanguage = "";
+  let bestCode = "";
+  for (const match of rawOutput.matchAll(codeFencePattern)) {
+    const language = normalizeCodeLanguage(match[1] || "");
+    const code = (match[2] || "").trim();
+    if (code.length > bestCode.length) {
+      bestCode = code;
+      bestLanguage = language;
+    }
+  }
+
+  if (bestCode) {
+    const languageFromPrompt = inferLanguageFromPrompt(prompt);
+    const normalizedLanguage = normalizeCodeLanguage(bestLanguage || languageFromPrompt);
+    const extension = codeExtensionMap[normalizedLanguage] || "txt";
+    return {
+      language: normalizedLanguage,
+      extension,
+      fileName: buildCodeFileName(normalizedLanguage),
+      code: bestCode,
+    };
+  }
+
+  if (looksLikeCode(rawOutput)) {
+    const normalizedLanguage = normalizeCodeLanguage(inferLanguageFromPrompt(prompt));
+    const extension = codeExtensionMap[normalizedLanguage] || "txt";
+    return {
+      language: normalizedLanguage,
+      extension,
+      fileName: buildCodeFileName(normalizedLanguage),
+      code: rawOutput.trim(),
+    };
+  }
+
+  return null;
 };
 
 const computeResponseTokenLimit = (
@@ -589,6 +757,16 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       }
 
       const route = routeModel(currentChat.currentModel, intent);
+      const fastCodeModelId = (process.env.MODEL_CODE_FAST_ID || "").trim();
+      const codeFastPath = intent === "coding" && isCodeGenerationPrompt(trimmedInput);
+      if (CODE_FAST_PATH_ENABLED && codeFastPath) {
+        if (route.autoRouted && fastCodeModelId) {
+          route.modelId = fastCodeModelId;
+          route.modelKey = "code-fast";
+        }
+        route.maxTokens = Math.min(route.maxTokens, 1200);
+        route.temperature = Math.min(route.temperature, 0.2);
+      }
       const modelOverride = forceVision ? "vision" : currentChat.currentModel;
       if (forceVision && modelOverride === "vision") {
         const vision = MODEL_LIST.find((model) => model.key === "vision");
@@ -915,7 +1093,26 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
           "I hit an issue generating a reply. Please try again in a moment.";
       }
 
-      outputBuffer = formatProfessionalReply(outputBuffer);
+      const rawModelOutput = outputBuffer;
+      const canAttachCodeFile =
+        CODE_FILE_EXPORT_ENABLED &&
+        intent === "coding" &&
+        !/issue generating a reply|authentication failed|credits are insufficient/i.test(
+          rawModelOutput,
+        );
+      const codeArtifact = canAttachCodeFile
+        ? extractCodeArtifact(rawModelOutput, trimmedInput)
+        : null;
+
+      let displayOutput = rawModelOutput;
+      if (codeArtifact) {
+        const explanationOnly = stripCodeFromDisplay(rawModelOutput);
+        displayOutput = explanationOnly
+          ? `${explanationOnly}\n\nCode editor file attached: ${codeArtifact.fileName}`
+          : `Code editor file attached: ${codeArtifact.fileName}`;
+      }
+
+      outputBuffer = formatProfessionalReply(displayOutput);
 
       const chunks = chunkText(outputBuffer, TELEGRAM_CHUNK_LIMIT);
       if (chunks.length === 0) {
@@ -940,6 +1137,17 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         for (let i = 1; i < chunks.length; i += 1) {
           await safeReplyText(ctx, chunks[i]);
         }
+      }
+
+      if (codeArtifact) {
+        await ctx
+          .replyWithDocument(
+            Input.fromBuffer(Buffer.from(codeArtifact.code, "utf8"), codeArtifact.fileName),
+            {
+              caption: `Code ready in editor file: ${codeArtifact.fileName}`,
+            },
+          )
+          .catch(() => {});
       }
 
       const shouldSendSticker =

@@ -136,6 +136,9 @@ Inline actions:
 - `TYPEWRITER_FALLBACK_ENABLED`: if true, non-stream providers are rendered with a typewriter effect
 - `TYPEWRITER_CHARS_PER_TICK`: characters revealed per typewriter update
 - `TYPEWRITER_TICK_MS`: delay between typewriter updates
+- `CODE_FILE_EXPORT_ENABLED`: if true, coding replies can include downloadable code files
+- `CODE_FAST_PATH_ENABLED`: if true, pure code-generation prompts use fast-code settings
+- `MODEL_CODE_FAST_ID`: optional fast model override for direct code generation
 
 ## Model Routing
 
@@ -168,6 +171,7 @@ Special Python disambiguation:
 - If a model stops due token limit, bot automatically requests continuation to complete the answer
 - If no sticker IDs are configured, bot uses an animated Telegram dice sticker fallback
 - For faster live rendering, reduce `STREAM_EDIT_INTERVAL_MS` and increase `TYPEWRITER_CHARS_PER_TICK`
+- For coding prompts, bot can attach a code file (editor-like document) for clean copy/paste
 
 ## Troubleshooting
 

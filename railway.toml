@@ -19,6 +19,7 @@ MAX_CONTINUATION_ROUNDS = { required = false, description = "Auto-continuation r
 MODEL_FAST_ID = { required = false, description = "Override fast model id" }
 MODEL_SMART_ID = { required = false, description = "Override smart model id" }
 MODEL_CODE_ID = { required = false, description = "Override code model id" }
+MODEL_CODE_FAST_ID = { required = false, description = "Optional fast model for direct code generation prompts" }
 MODEL_MATH_ID = { required = false, description = "Override math model id" }
 MODEL_VISION_ID = { required = false, description = "Override vision model id" }
 SUMMARY_MODEL = { required = false, description = "Model id used for running summary updates" }
@@ -27,6 +28,8 @@ TYPEWRITER_CHARS_PER_TICK = { required = false, description = "Typewriter speed:
 TYPEWRITER_TICK_MS = { required = false, description = "Typewriter speed: delay in milliseconds between ticks" }
 TG_STICKER_REPLY_IDS = { required = false, description = "Comma-separated Telegram sticker file IDs for auto-reply stickers" }
 TG_STICKER_REPLY_PROBABILITY = { required = false, description = "Reply sticker probability between 0 and 1" }
+CODE_FILE_EXPORT_ENABLED = { required = false, description = "Attach generated code as downloadable editor-like file" }
+CODE_FAST_PATH_ENABLED = { required = false, description = "Enable faster model/token settings for pure code-generation prompts" }
 LOG_LEVEL = { required = false, description = "pino log level (info/debug/warn/error)" }
 
 [deploy]
