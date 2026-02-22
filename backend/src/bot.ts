@@ -231,7 +231,7 @@ const buildModelAttempts = (primaryModelId: string, fallbackModelId: string): st
     primaryModelId,
     fallbackModelId,
     (process.env.DEFAULT_MODEL || "").trim(),
-    "openrouter/auto",
+    "openrouter/free",
     ...fromEnvPool,
   ].filter(Boolean);
 
@@ -550,7 +550,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       const fallbackModelId = (
         process.env.FALLBACK_MODEL ||
         process.env.DEFAULT_MODEL ||
-        "openrouter/auto"
+        "openrouter/free"
       ).trim();
 
       const callWithFallback = async <T>(

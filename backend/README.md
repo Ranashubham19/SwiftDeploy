@@ -79,6 +79,14 @@ npm run dev
 - `DATABASE_URL` (Railway Postgres)
 - `APP_URL` (your Railway public URL, e.g. `https://your-app.up.railway.app`)
 - Optional tuning vars from `.env.example`
+- For free-only mode, set:
+  - `DEFAULT_MODEL=openrouter/free`
+  - `FALLBACK_MODEL=openrouter/free`
+  - `MODEL_FAST_ID=openrouter/free`
+  - `MODEL_SMART_ID=openai/gpt-oss-120b:free`
+  - `MODEL_CODE_ID=qwen/qwen3-coder:free`
+  - `MODEL_MATH_ID=deepseek/deepseek-r1-0528:free`
+  - `MODEL_VISION_ID=nvidia/nemotron-nano-12b-v2-vl:free`
 
 2. Deploy.
 

@@ -22,7 +22,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   auto: {
     key: "auto",
     label: "Auto",
-    id: fromEnv("DEFAULT_MODEL", "openrouter/auto"),
+    id: fromEnv("DEFAULT_MODEL", "openrouter/free"),
     description: "Intent-based automatic routing.",
     temperature: 0.45,
     maxTokens: 1200,
@@ -30,7 +30,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   fast: {
     key: "fast",
     label: "Fast",
-    id: fromEnv("MODEL_FAST_ID", "openrouter/auto"),
+    id: fromEnv("MODEL_FAST_ID", "openrouter/free"),
     description: "Low-latency general assistant.",
     temperature: 0.45,
     maxTokens: 900,
@@ -38,7 +38,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   smart: {
     key: "smart",
     label: "Smart",
-    id: fromEnv("MODEL_SMART_ID", "anthropic/claude-3.5-sonnet"),
+    id: fromEnv("MODEL_SMART_ID", "openai/gpt-oss-120b:free"),
     description: "High quality general reasoning.",
     temperature: 0.4,
     maxTokens: 1400,
@@ -46,7 +46,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   code: {
     key: "code",
     label: "Code",
-    id: fromEnv("MODEL_CODE_ID", "qwen/qwen-2.5-coder-32b-instruct"),
+    id: fromEnv("MODEL_CODE_ID", "qwen/qwen3-coder:free"),
     description: "Coding, debugging, and architecture.",
     temperature: 0.2,
     maxTokens: 1600,
@@ -54,7 +54,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   math: {
     key: "math",
     label: "Math",
-    id: fromEnv("MODEL_MATH_ID", "deepseek/deepseek-r1"),
+    id: fromEnv("MODEL_MATH_ID", "deepseek/deepseek-r1-0528:free"),
     description: "Mathematics and step-by-step reasoning.",
     temperature: 0.15,
     maxTokens: 1500,
@@ -62,7 +62,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   vision: {
     key: "vision",
     label: "Vision",
-    id: fromEnv("MODEL_VISION_ID", "openai/gpt-4o-mini"),
+    id: fromEnv("MODEL_VISION_ID", "nvidia/nemotron-nano-12b-v2-vl:free"),
     description: "Image-capable model where supported.",
     temperature: 0.35,
     maxTokens: 1200,
