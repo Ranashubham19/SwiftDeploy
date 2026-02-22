@@ -167,6 +167,7 @@ Special Python disambiguation:
 - Response formatter enforces readable plain text with clean spacing and numbered lists
 - If a model stops due token limit, bot automatically requests continuation to complete the answer
 - If no sticker IDs are configured, bot uses an animated Telegram dice sticker fallback
+- For faster live rendering, reduce `STREAM_EDIT_INTERVAL_MS` and increase `TYPEWRITER_CHARS_PER_TICK`
 
 ## Troubleshooting
 

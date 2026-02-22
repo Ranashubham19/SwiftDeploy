@@ -44,8 +44,8 @@ const MAX_OUTPUT_TOKENS = Math.max(
   Number(process.env.MAX_OUTPUT_TOKENS || 1800),
 );
 const STREAM_EDIT_INTERVAL_MS = Math.max(
-  120,
-  Number(process.env.STREAM_EDIT_INTERVAL_MS || 260),
+  90,
+  Number(process.env.STREAM_EDIT_INTERVAL_MS || 130),
 );
 
 const openRouter = new OpenRouterClient({

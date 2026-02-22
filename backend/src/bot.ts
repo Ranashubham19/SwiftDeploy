@@ -51,11 +51,11 @@ const TYPEWRITER_FALLBACK_ENABLED =
   (process.env.TYPEWRITER_FALLBACK_ENABLED || "true").toLowerCase() !== "false";
 const TYPEWRITER_CHARS_PER_TICK = Math.max(
   12,
-  Math.min(180, Number(process.env.TYPEWRITER_CHARS_PER_TICK || "52")),
+  Math.min(220, Number(process.env.TYPEWRITER_CHARS_PER_TICK || "104")),
 );
 const TYPEWRITER_TICK_MS = Math.max(
-  8,
-  Math.min(80, Number(process.env.TYPEWRITER_TICK_MS || "14")),
+  6,
+  Math.min(80, Number(process.env.TYPEWRITER_TICK_MS || "8")),
 );
 
 type BotContext = Context;
@@ -568,14 +568,6 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       });
 
       const refreshedBefore = await options.store.refreshChat(chatInfo.chat.id);
-      if (refreshedBefore) {
-        void options.summarizer.summarizeIfNeeded(refreshedBefore).catch((error) => {
-          logger.warn(
-            { chatId: chatInfo.chat.id, error: error instanceof Error ? error.message : String(error) },
-            "Background summarization failed",
-          );
-        });
-      }
       const currentChat = refreshedBefore ?? chatInfo.chat;
 
       const memories = await options.store.getMemories(chatInfo.chat.id);
@@ -925,7 +917,6 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       }
 
       const shouldSendSticker =
-        REPLY_STICKER_IDS.length > 0 &&
         !/issue generating a reply/i.test(outputBuffer) &&
         Math.random() < REPLY_STICKER_PROBABILITY;
       if (shouldSendSticker) {
@@ -937,6 +928,20 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         role: MessageRole.ASSISTANT,
         content: outputBuffer,
       });
+
+      // Run summary update after user-visible response is already delivered.
+      void options.store
+        .refreshChat(chatInfo.chat.id)
+        .then((refreshed) => {
+          if (!refreshed) return;
+          return options.summarizer.summarizeIfNeeded(refreshed);
+        })
+        .catch((error) => {
+          logger.warn(
+            { chatId: chatInfo.chat.id, error: error instanceof Error ? error.message : String(error) },
+            "Post-response summarization failed",
+          );
+        });
     });
   };
 

@@ -14,7 +14,7 @@ DEFAULT_MODEL = { required = false, description = "Default model key/id (default
 FALLBACK_MODEL = { required = false, description = "Fallback model id" }
 MAX_INPUT_CHARS = { required = false, description = "Max Telegram input chars per message" }
 MAX_OUTPUT_TOKENS = { required = false, description = "Max OpenRouter output tokens" }
-STREAM_EDIT_INTERVAL_MS = { required = false, description = "Streaming edit throttle interval for Telegram message edits" }
+STREAM_EDIT_INTERVAL_MS = { required = false, description = "Streaming edit throttle interval for Telegram message edits (lower = faster visible typing)" }
 MAX_CONTINUATION_ROUNDS = { required = false, description = "Auto-continuation rounds when response is cut by token limit" }
 MODEL_FAST_ID = { required = false, description = "Override fast model id" }
 MODEL_SMART_ID = { required = false, description = "Override smart model id" }
