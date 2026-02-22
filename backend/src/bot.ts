@@ -618,6 +618,24 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
           if (!outputBuffer.trim() && streamResult.text.trim()) {
             outputBuffer = streamResult.text;
           }
+
+          // Fallback path for providers that fail to deliver usable streaming chunks.
+          if (!outputBuffer.trim()) {
+            const backupResult = await callWithFallback((modelId) =>
+              options.openRouter.chatCompletion(
+                {
+                  model: modelId,
+                  messages: messagesForFinal,
+                  temperature: currentChat.temperature ?? route.temperature,
+                  max_tokens: Math.min(route.maxTokens, options.maxOutputTokens),
+                },
+                { signal: controller.signal },
+              ),
+            );
+            if (backupResult.content.trim()) {
+              outputBuffer = backupResult.content;
+            }
+          }
         }
       } catch (error) {
         if (isAbortError(error)) {

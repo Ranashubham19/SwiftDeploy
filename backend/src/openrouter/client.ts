@@ -227,6 +227,8 @@ export class OpenRouterClient {
       const reader = response.body.getReader();
       let buffer = "";
       let text = "";
+      // Some providers return cumulative final text in `message.content` instead of `delta.content`.
+      let messageSnapshot = "";
       let finishReason: string | null = null;
       let usage: StreamCompletionResult["usage"] | undefined;
       const toolCallsByIndex = new Map<number, OpenRouterToolCall>();
@@ -272,6 +274,20 @@ export class OpenRouterClient {
               text += deltaText;
               if (options.onDelta) {
                 await options.onDelta(deltaText);
+              }
+            } else if (typeof choice.message?.content === "string") {
+              const messageText = choice.message.content;
+              if (messageText.length > messageSnapshot.length) {
+                const incrementalText = messageText.startsWith(messageSnapshot)
+                  ? messageText.slice(messageSnapshot.length)
+                  : messageText;
+                messageSnapshot = messageText;
+                if (incrementalText) {
+                  text += incrementalText;
+                  if (options.onDelta) {
+                    await options.onDelta(incrementalText);
+                  }
+                }
               }
             }
 
