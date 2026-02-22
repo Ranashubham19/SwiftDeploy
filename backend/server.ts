@@ -337,8 +337,6 @@ const userHasAnyDeployedTelegramBot = (email: string): boolean => {
 const requiresTelegramSubscription = (email: string): boolean => {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return true;
-  // Existing Telegram bot owners (grandfathered) skip the subscription gate.
-  if (userHasAnyDeployedTelegramBot(normalized)) return false;
   return !ensureUserSubscriptionState(normalized).isSubscribed;
 };
 
@@ -2966,6 +2964,23 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   const botId = getBotIdByTelegramToken(botToken);
 
   if (!text) return;
+  if (botId) {
+    const ownerEmail = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
+    if (ownerEmail && !telegramBotOwners.has(botId)) {
+      telegramBotOwners.set(botId, ownerEmail);
+    }
+    if (!ownerEmail || !ensureUserSubscriptionState(ownerEmail).isSubscribed) {
+      const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
+      if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
+      await sendTelegramReply(
+        botInstance,
+        chatId,
+        'Your subscription is inactive. Please renew your plan from the dashboard to continue AI bot access.',
+        msg.message_id
+      );
+      return;
+    }
+  }
   if (botId && CREDIT_ENFORCEMENT_ACTIVE) {
     const credit = applyCreditDecay(botId);
     if (credit.depleted || credit.remainingUsd <= 0) {
@@ -4636,6 +4651,9 @@ app.post('/billing/confirm-telegram-subscription-session', requireAuth, billingR
 });
 
 app.post('/billing/activate-plan', requireAuth, (req, res) => {
+  if (!hasValidAdminKey(req)) {
+    return res.status(403).json({ success: false, message: 'Admin access required' });
+  }
   const reqUser = req.user as Express.User | undefined;
   const email = (reqUser?.email || '').trim().toLowerCase();
   if (!email) {

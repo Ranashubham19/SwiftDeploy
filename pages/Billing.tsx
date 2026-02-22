@@ -38,31 +38,12 @@ const Billing: React.FC<{ user: User }> = ({ user }) => {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
-  const [isActivatingPlan, setIsActivatingPlan] = useState(false);
   const initialPlan = (query.get('plan') || 'pro').toLowerCase();
   const [plan, setPlan] = useState<PlanKey>(
     initialPlan === 'starter' ? 'starter' : initialPlan === 'enterprise' ? 'enterprise' : 'pro'
   );
   const [provider, setProvider] = useState<Provider>('stripe');
   const selected = PRICING[plan];
-
-  React.useEffect(() => {
-    if (checkoutStatus !== 'success' || isActivatingPlan) return;
-    const activate = async () => {
-      setIsActivatingPlan(true);
-      try {
-        await fetch(apiUrl('/billing/activate-plan'), {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tier: plan.toUpperCase() })
-        });
-      } finally {
-        setIsActivatingPlan(false);
-      }
-    };
-    activate();
-  }, [plan, checkoutStatus, isActivatingPlan]);
 
   const handleCheckout = async () => {
     setError('');
