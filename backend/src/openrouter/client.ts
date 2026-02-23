@@ -94,6 +94,7 @@ type OpenRouterClientConfig = {
   title?: string;
   timeoutMs?: number;
   maxRetries?: number;
+  retryBaseDelayMs?: number;
 };
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -148,11 +149,13 @@ export class OpenRouterClient {
   private readonly endpoint: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
+  private readonly retryBaseDelayMs: number;
 
   public constructor(private readonly config: OpenRouterClientConfig) {
     this.endpoint = normalizeEndpoint(config.baseUrl);
     this.timeoutMs = config.timeoutMs ?? 45_000;
     this.maxRetries = config.maxRetries ?? 4;
+    this.retryBaseDelayMs = config.retryBaseDelayMs ?? 300;
   }
 
   public async chatCompletion(
@@ -372,7 +375,8 @@ export class OpenRouterClient {
           throw error;
         }
 
-        const delay = Math.min(4000, 300 * 2 ** attempt) + Math.random() * 120;
+        const delay =
+          Math.min(4000, this.retryBaseDelayMs * 2 ** attempt) + Math.random() * 120;
         logger.warn(
           { attempt, status, delay, error: String((error as Error)?.message ?? error) },
           "OpenRouter request failed, retrying",
