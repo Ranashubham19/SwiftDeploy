@@ -136,6 +136,9 @@ const app = express();
 if (IS_PRODUCTION) {
   app.set("trust proxy", 1);
 }
+let telegramRuntimeReady = false;
+let startupAttempts = 0;
+let startupRetryTimer: NodeJS.Timeout | null = null;
 const allowedOrigins = new Set(
   [
     FRONTEND_URL,
@@ -177,6 +180,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     mode: "bot-runtime-with-auth-fallback",
     hasGoogleConfig: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+    telegramRuntimeReady,
   });
 });
 
@@ -364,63 +368,102 @@ app.post("/webhook", async (req, res) => {
 const server = app.listen(PORT, "0.0.0.0", async () => {
   logger.info({ port: PORT }, "Telegram bot server started");
 
-  try {
-    await bot.telegram.setMyCommands([
-      { command: "start", description: "Start bot and onboarding" },
-      { command: "help", description: "Show command help" },
-      { command: "reset", description: "Reset chat history" },
-      { command: "model", description: "Show or switch model" },
-      { command: "settings", description: "Configure temperature and verbosity" },
-      { command: "export", description: "Export conversation data" },
-      { command: "stop", description: "Stop active streaming response" },
-    ]);
+  const scheduleRetry = (): void => {
+    if (startupRetryTimer) return;
+    const delayMs = Math.min(60_000, 2000 * 2 ** Math.max(0, startupAttempts - 1));
+    startupRetryTimer = setTimeout(() => {
+      startupRetryTimer = null;
+      void startTelegramRuntime();
+    }, delayMs);
+    logger.warn({ delayMs, startupAttempts }, "Scheduling Telegram runtime restart");
+  };
 
-    const startPolling = async (reason: string): Promise<void> => {
-      await bot.telegram
-        .deleteWebhook({ drop_pending_updates: false })
-        .catch(() => {});
-      await bot.launch({ dropPendingUpdates: false });
-      logger.info({ reason }, "Long-polling mode enabled");
-    };
+  const startPolling = async (reason: string): Promise<void> => {
+    await bot.telegram
+      .deleteWebhook({ drop_pending_updates: false })
+      .catch(() => {});
+    await bot.launch({ dropPendingUpdates: false });
+    logger.info({ reason }, "Long-polling mode enabled");
+  };
 
-    if (TELEGRAM_USE_WEBHOOK) {
-      if (!APP_URL) {
-        logger.warn(
-          "TELEGRAM_USE_WEBHOOK=true but APP_URL is missing; falling back to long-polling",
-        );
-        await startPolling("webhook requested without APP_URL");
-      } else {
-        const webhookUrl = `${APP_URL}/webhook`;
-        try {
-          await bot.telegram.setWebhook(webhookUrl, {
-            drop_pending_updates: false,
-          });
-          const webhookInfo = await bot.telegram.getWebhookInfo();
-          logger.info({ webhookUrl, webhookInfo }, "Webhook mode enabled");
-        } catch (error) {
-          logger.error(
-            {
-              webhookUrl,
-              error: error instanceof Error ? error.stack : String(error),
-            },
-            "Webhook setup failed; falling back to long-polling",
-          );
-          await startPolling("webhook setup failed");
-        }
-      }
-    } else {
-      await startPolling("TELEGRAM_USE_WEBHOOK=false");
+  const startTelegramRuntime = async (): Promise<void> => {
+    startupAttempts += 1;
+    try {
+      await bot.telegram.setMyCommands([
+        { command: "start", description: "Start bot and onboarding" },
+        { command: "help", description: "Show command help" },
+        { command: "reset", description: "Reset chat history" },
+        { command: "model", description: "Show or switch model" },
+        { command: "settings", description: "Configure temperature and verbosity" },
+        { command: "export", description: "Export conversation data" },
+        { command: "stop", description: "Stop active streaming response" },
+      ]);
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.stack : String(error) },
+        "setMyCommands failed; continuing startup",
+      );
     }
-  } catch (error) {
-    logger.error(
-      { error: error instanceof Error ? error.stack : String(error) },
-      "Telegram startup failed; HTTP server remains online",
-    );
-  }
+
+    try {
+      if (TELEGRAM_USE_WEBHOOK) {
+        if (!APP_URL) {
+          logger.warn(
+            "TELEGRAM_USE_WEBHOOK=true but APP_URL is missing; falling back to long-polling",
+          );
+          await startPolling("webhook requested without APP_URL");
+        } else {
+          const webhookUrl = `${APP_URL}/webhook`;
+          try {
+            await bot.telegram.setWebhook(webhookUrl, {
+              drop_pending_updates: false,
+            });
+            const webhookInfo = await bot.telegram.getWebhookInfo();
+            logger.info({ webhookUrl, webhookInfo }, "Webhook mode enabled");
+          } catch (error) {
+            logger.error(
+              {
+                webhookUrl,
+                error: error instanceof Error ? error.stack : String(error),
+              },
+              "Webhook setup failed; falling back to long-polling",
+            );
+            await startPolling("webhook setup failed");
+          }
+        }
+      } else {
+        await startPolling("TELEGRAM_USE_WEBHOOK=false");
+      }
+
+      const me = await bot.telegram.getMe();
+      telegramRuntimeReady = true;
+      startupAttempts = 0;
+      logger.info(
+        { username: me.username, id: me.id },
+        "Telegram runtime ready",
+      );
+    } catch (error) {
+      telegramRuntimeReady = false;
+      logger.error(
+        {
+          startupAttempts,
+          error: error instanceof Error ? error.stack : String(error),
+        },
+        "Telegram startup failed; HTTP server remains online",
+      );
+      scheduleRetry();
+    }
+  };
+
+  void startTelegramRuntime();
 });
 
 const shutdown = async (signal: string): Promise<void> => {
   logger.info({ signal }, "Shutting down");
+  if (startupRetryTimer) {
+    clearTimeout(startupRetryTimer);
+    startupRetryTimer = null;
+  }
   try {
     await bot.stop(signal);
   } catch {}
