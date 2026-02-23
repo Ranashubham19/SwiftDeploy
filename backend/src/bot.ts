@@ -1017,22 +1017,6 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         let messagesForFinal = [...messages];
         let precomputedText: string | null = null;
 
-        if (codeFastPath) {
-          const quickCodeResult = await callWithFallback((modelId) =>
-            options.openRouter.chatCompletion(
-              {
-                model: modelId,
-                messages: messagesForFinal,
-                temperature: Math.min(currentChat.temperature ?? route.temperature, 0.2),
-                max_tokens: Math.min(responseTokenLimit, 1700),
-              },
-              { signal: controller.signal },
-            ),
-          );
-          markIfTruncated(quickCodeResult.finishReason);
-          precomputedText = quickCodeResult.content || null;
-        }
-
         if (useTools) {
           for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
             const decision = await callWithFallback((modelId) =>
