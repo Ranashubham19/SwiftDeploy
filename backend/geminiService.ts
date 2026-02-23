@@ -384,6 +384,19 @@ const getOpenRouterCandidateModels = (prompt: string): string[] => {
   return Array.from(new Set([baseModel, ...intentModels, ...poolModels].filter(Boolean)));
 };
 
+const normalizeOpenRouterEndpoint = (inputUrl: string): string => {
+  const raw = String(inputUrl || '').trim();
+  const fallback = 'https://openrouter.ai/api/v1/chat/completions';
+  if (!raw) return fallback;
+  const trimmed = raw.replace(/\/+$/, '');
+  const withEndpoint = /\/chat\/completions$/i.test(trimmed) ? trimmed : `${trimmed}/chat/completions`;
+  try {
+    return new URL(withEndpoint).toString();
+  } catch {
+    return fallback;
+  }
+};
+
 const callOpenAI = async (prompt: string, history: ChatHistory, systemInstruction?: string, modelOverride?: string): Promise<string> => {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) {
@@ -532,7 +545,9 @@ const callOpenRouter = async (prompt: string, history: ChatHistory, systemInstru
     throw new Error('OPENROUTER_MODEL_MISSING');
   }
   const historyText = extractHistoryText(history);
-  const baseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions').trim();
+  const baseUrl = normalizeOpenRouterEndpoint(
+    process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions'
+  );
   const referer = (process.env.FRONTEND_URL || process.env.BASE_URL || '').trim();
   let lastError: Error | null = null;
   for (const model of attempts) {

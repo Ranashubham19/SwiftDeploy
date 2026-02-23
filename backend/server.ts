@@ -2641,10 +2641,12 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
         resolvedProvider
       }));
     }
+    const forceSingleProvider = (process.env.AI_FORCE_PROVIDER || 'false').trim().toLowerCase() === 'true';
     const enforcedRuntimeConfig: AIRuntimeConfig = {
       provider: resolvedProvider,
       model: resolvedModel || undefined,
-      forceProvider: Boolean(resolvedProvider)
+      // Keep preferred provider first, but allow automatic provider failover by default.
+      forceProvider: forceSingleProvider && Boolean(resolvedProvider)
     };
     const startedAt = Date.now();
     const resolveTopicSafeFallback = async (): Promise<string> => {
