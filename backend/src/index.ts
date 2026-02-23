@@ -169,6 +169,8 @@ let startupAttempts = 0;
 let startupRetryTimer: NodeJS.Timeout | null = null;
 let telegramRuntimeMode: "webhook" | "polling" | "unknown" = "unknown";
 let lastTelegramStartupError: string | null = null;
+let pollingLaunchPromise: Promise<void> | null = null;
+let shutdownRequested = false;
 const allowedOrigins = new Set(
   [
     FRONTEND_URL,
@@ -420,11 +422,22 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       );
     } catch {}
 
-    await withTimeout(
-      "bot.launch",
-      TELEGRAM_LAUNCH_TIMEOUT_MS,
-      bot.launch({ dropPendingUpdates: false }),
-    );
+    if (!pollingLaunchPromise) {
+      pollingLaunchPromise = bot.launch({ dropPendingUpdates: false });
+      void pollingLaunchPromise.catch((error) => {
+        pollingLaunchPromise = null;
+        if (shutdownRequested) return;
+        telegramRuntimeReady = false;
+        const message = error instanceof Error ? error.message : String(error);
+        lastTelegramStartupError = `polling runtime failed: ${message}`.slice(0, 800);
+        logger.error(
+          { error: error instanceof Error ? error.stack : String(error) },
+          "Telegram polling runtime failed; scheduling restart",
+        );
+        scheduleRetry();
+      });
+    }
+
     telegramRuntimeMode = "polling";
     logger.info({ reason }, "Long-polling mode enabled");
   };
@@ -456,6 +469,12 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     }
 
     try {
+      const me = await withTimeout(
+        "getMe",
+        TELEGRAM_API_TIMEOUT_MS,
+        bot.telegram.getMe(),
+      );
+
       if (TELEGRAM_USE_WEBHOOK) {
         if (!APP_URL) {
           logger.warn(
@@ -494,11 +513,6 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
         await startPolling("TELEGRAM_USE_WEBHOOK=false");
       }
 
-      const me = await withTimeout(
-        "getMe",
-        TELEGRAM_API_TIMEOUT_MS,
-        bot.telegram.getMe(),
-      );
       telegramRuntimeReady = true;
       startupAttempts = 0;
       lastTelegramStartupError = null;
@@ -527,6 +541,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
 
 const shutdown = async (signal: string): Promise<void> => {
   logger.info({ signal }, "Shutting down");
+  shutdownRequested = true;
   if (startupRetryTimer) {
     clearTimeout(startupRetryTimer);
     startupRetryTimer = null;
