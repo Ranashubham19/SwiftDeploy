@@ -17,7 +17,10 @@ import { chunkText } from "./utils/chunking.js";
 import { DatabaseRateLimiter } from "./utils/rateLimit.js";
 import { DbLockManager } from "./utils/locks.js";
 import { isAbortError } from "./utils/errors.js";
-import { formatProfessionalReply } from "./utils/responseFormat.js";
+import {
+  formatProfessionalCodeReply,
+  formatProfessionalReply,
+} from "./utils/responseFormat.js";
 
 type BotBuildOptions = {
   token: string;
@@ -571,10 +574,18 @@ const computeResponseTokenLimit = (
   routeMaxTokens: number,
   globalMaxTokens: number,
   verbosity: "concise" | "normal" | "detailed",
+  isCodeRequest: boolean,
 ): number => {
   const base = Math.min(routeMaxTokens, globalMaxTokens);
   const isDetailedRequest = verbosity === "detailed" || detailedPromptPattern.test(inputText);
   const isShortPrompt = inputText.trim().length < 80 && !isDetailedRequest;
+
+  if (isCodeRequest) {
+    if (isDetailedRequest) {
+      return Math.min(globalMaxTokens, Math.max(base, Math.min(2200, globalMaxTokens)));
+    }
+    return Math.min(globalMaxTokens, Math.max(base, Math.min(1400, globalMaxTokens)));
+  }
 
   if (isShortPrompt) {
     return Math.max(260, Math.min(base, 560));
@@ -917,6 +928,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         route.maxTokens,
         options.maxOutputTokens,
         currentChat.verbosity,
+        codeFastPath,
       );
       let wasTruncatedByTokens = false;
       const markIfTruncated = (finishReason: string | null | undefined): void => {
@@ -1001,9 +1013,25 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       activeStreams.set(conversationKey, controller);
 
       try {
-        const useTools = shouldEnableTools(trimmedInput);
+        const useTools = shouldEnableTools(trimmedInput) && !codeFastPath;
         let messagesForFinal = [...messages];
         let precomputedText: string | null = null;
+
+        if (codeFastPath) {
+          const quickCodeResult = await callWithFallback((modelId) =>
+            options.openRouter.chatCompletion(
+              {
+                model: modelId,
+                messages: messagesForFinal,
+                temperature: Math.min(currentChat.temperature ?? route.temperature, 0.2),
+                max_tokens: Math.min(responseTokenLimit, 1700),
+              },
+              { signal: controller.signal },
+            ),
+          );
+          markIfTruncated(quickCodeResult.finishReason);
+          precomputedText = quickCodeResult.content || null;
+        }
 
         if (useTools) {
           for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -1182,6 +1210,37 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         }
       }
 
+      if (!stopped && !outputBuffer.trim()) {
+        try {
+          const rescueResult = await callWithFallback((modelId) =>
+            options.openRouter.chatCompletion(
+              {
+                model: modelId,
+                messages,
+                temperature: Math.min(currentChat.temperature ?? route.temperature, 0.2),
+                max_tokens: Math.min(Math.max(responseTokenLimit, 900), 1700),
+              },
+              { signal: controller.signal },
+            ),
+          );
+          markIfTruncated(rescueResult.finishReason);
+          if (rescueResult.content.trim()) {
+            outputBuffer = rescueResult.content;
+            generationErrored = false;
+          }
+        } catch (rescueError) {
+          logger.warn(
+            {
+              error:
+                rescueError instanceof Error
+                  ? rescueError.message
+                  : String(rescueError),
+            },
+            "Rescue generation attempt failed",
+          );
+        }
+      }
+
       if (stopped) {
         outputBuffer = `${outputBuffer.trim()}\n\n[stopped]`.trim();
       }
@@ -1211,11 +1270,13 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       if (codeArtifact) {
         const explanationOnly = stripCodeFromDisplay(rawModelOutput);
         displayOutput = explanationOnly
-          ? `${explanationOnly}\n\nCode editor file attached: ${codeArtifact.fileName}`
-          : `Code editor file attached: ${codeArtifact.fileName}`;
+          ? `${explanationOnly}\n\nCode:\n${codeArtifact.code}\n\nCode editor file attached: ${codeArtifact.fileName}`
+          : `Code:\n${codeArtifact.code}\n\nCode editor file attached: ${codeArtifact.fileName}`;
       }
 
-      outputBuffer = formatProfessionalReply(displayOutput);
+      outputBuffer = codeArtifact
+        ? formatProfessionalCodeReply(displayOutput)
+        : formatProfessionalReply(displayOutput);
 
       const chunks = chunkText(outputBuffer, TELEGRAM_CHUNK_LIMIT);
       if (chunks.length === 0) {

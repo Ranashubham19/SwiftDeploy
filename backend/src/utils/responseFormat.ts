@@ -143,3 +143,15 @@ export const formatProfessionalReply = (input: string): string => {
   const output = normalizedLines.join("\n").trim();
   return output || "I could not generate a clean response. Please try again.";
 };
+
+export const formatProfessionalCodeReply = (input: string): string => {
+  const ascii = normalizeAscii(input || "");
+  const lines = ascii
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .filter((line, index, arr) => !(line === "" && arr[index - 1] === ""));
+
+  const output = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return output || "I could not generate code output. Please try again.";
+};
