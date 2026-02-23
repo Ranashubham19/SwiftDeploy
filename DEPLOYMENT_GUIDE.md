@@ -48,6 +48,8 @@ NODE_ENV=production
 
 ```
 VITE_API_URL=https://your-railway-backend-domain.up.railway.app
+# Optional/recommended when using Vercel API proxy (`/api/*`)
+BACKEND_API_URL=https://your-railway-backend-domain.up.railway.app
 ```
 
 4. Vercel will build and deploy your frontend application
@@ -59,7 +61,8 @@ VITE_API_URL=https://your-railway-backend-domain.up.railway.app
 - Note the Railway domain URL (e.g., `https://your-app.up.railway.app`)
 
 ### 2. Configure Frontend Environment
-- Set `VITE_API_URL` to your Railway backend URL
+- Set `VITE_API_URL` or `BACKEND_API_URL` to your Railway backend URL
+- `BACKEND_API_URL` is used by the server-side `/api/*` proxy
 - This ensures the frontend communicates with your production backend
 
 ### 3. Deploy Frontend

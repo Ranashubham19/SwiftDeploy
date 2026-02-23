@@ -37,6 +37,32 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [connectedBotLink, setConnectedBotLink] = useState(stageBotLink);
   const [connectedAiProvider, setConnectedAiProvider] = useState('');
   const [connectedAiModel, setConnectedAiModel] = useState('');
+  const parseDeployResponse = async (response: Response): Promise<any> => {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('application/json')) {
+      return response.json().catch(() => ({}));
+    }
+    const rawText = await response.text().catch(() => '');
+    return { rawText };
+  };
+
+  const formatDeployError = (result: any, statusCode: number): string => {
+    const errorText = String(result?.error || result?.message || '').trim();
+    const detailsText = String(result?.details || '').trim();
+    const rawText = String(result?.rawText || '').trim();
+    if (errorText && detailsText) return `${errorText}: ${detailsText}`;
+    if (errorText) return errorText;
+    if (detailsText) return detailsText;
+    if (statusCode === 401) return 'Authentication required. Please sign in again.';
+    if (statusCode === 404 || statusCode === 405) return 'Deploy endpoint not found. Backend is not in provisioning mode.';
+    if (/<!doctype html>|<html/i.test(rawText)) {
+      return 'Backend API is not connected. Set Vercel BACKEND_API_URL (or VITE_API_URL) to your Railway backend URL.';
+    }
+    if (rawText) {
+      return 'Backend returned a non-JSON response. Check API routing configuration.';
+    }
+    return 'Deployment failed';
+  };
 
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -216,14 +242,14 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
         })
       });
 
-      const result = await response.json().catch(() => ({}));
+      const result = await parseDeployResponse(response);
 
       if (!response.ok) {
-        throw new Error(result?.error || result?.message || 'Deployment failed');
+        throw new Error(formatDeployError(result, response.status));
       }
 
       if (!result.success) {
-        throw new Error(result?.error || result?.message || 'Deployment failed');
+        throw new Error(formatDeployError(result, response.status));
       }
       applyDeployResult(result);
     } catch (error: any) {

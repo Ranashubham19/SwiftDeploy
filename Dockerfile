@@ -22,4 +22,4 @@ COPY --from=build /app/backend/prisma ./backend/prisma
 COPY --from=build /app/backend/env-preload.mjs ./backend/env-preload.mjs
 
 EXPOSE 4000
-CMD ["npm", "--prefix", "backend", "run", "start:railway"]
+CMD ["npm", "--prefix", "backend", "run", "start:railway:legacy"]

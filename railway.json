@@ -4,7 +4,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "npm --prefix backend run start:railway:bot",
+    "startCommand": "npm --prefix backend run start:railway:legacy",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300
   }

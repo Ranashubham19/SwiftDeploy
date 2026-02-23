@@ -54,7 +54,7 @@ To develop and test your bot locally:
 ### Option B: Vercel Deployment (Frontend)
 
 1.  **Prepare for Frontend Deployment**:
-    - Make sure `VITE_API_URL` is set to your backend production URL
+    - Make sure `VITE_API_URL` or `BACKEND_API_URL` is set to your backend production URL
     - The `vercel.json` file is configured for static hosting
 
 2.  **Deploy to Vercel**:
@@ -63,7 +63,7 @@ To develop and test your bot locally:
     - Output directory: `dist`
 
 3.  **Environment Variables**:
-    - Set `VITE_API_URL` to your backend URL (e.g., `https://your-backend-domain.up.railway.app`)
+    - Set `VITE_API_URL` or `BACKEND_API_URL` to your backend URL (e.g., `https://your-backend-domain.up.railway.app`)
 
 ### Option C: Combined Deployment Approach
 
@@ -71,7 +71,7 @@ For a complete setup with frontend on Vercel and backend on Railway:
 
 1.  Deploy the backend first to Railway
 2.  Take note of your Railway backend URL
-3.  Deploy the frontend to Vercel with `VITE_API_URL` set to your Railway backend URL
+3.  Deploy the frontend to Vercel with `VITE_API_URL` or `BACKEND_API_URL` set to your Railway backend URL
 4.  The frontend will communicate with the backend via API calls
 
 ### Option D: Manual Deployment
