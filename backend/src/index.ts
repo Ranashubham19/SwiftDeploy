@@ -52,6 +52,26 @@ const parseBooleanEnv = (key: string, defaultValue: boolean): boolean => {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 };
 
+const withTimeout = async <T>(
+  label: string,
+  ms: number,
+  task: Promise<T>,
+): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${ms}ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 const TELEGRAM_BOT_TOKEN = requireEnv("TELEGRAM_BOT_TOKEN");
 const OPENROUTER_API_KEY = requireEnv("OPENROUTER_API_KEY");
 const OPENROUTER_BASE_URL =
@@ -60,6 +80,10 @@ const APP_URL = (process.env.APP_URL || process.env.BASE_URL || "")
   .trim()
   .replace(/\/+$/, "");
 const TELEGRAM_USE_WEBHOOK = parseBooleanEnv("TELEGRAM_USE_WEBHOOK", false);
+const TELEGRAM_API_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.TELEGRAM_API_TIMEOUT_MS || 15000),
+);
 const FRONTEND_URL = (process.env.FRONTEND_URL || "").trim().replace(/\/+$/, "");
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || "").trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
@@ -384,26 +408,42 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   };
 
   const startPolling = async (reason: string): Promise<void> => {
-    await bot.telegram
-      .deleteWebhook({ drop_pending_updates: false })
-      .catch(() => {});
-    await bot.launch({ dropPendingUpdates: false });
+    try {
+      await withTimeout(
+        "deleteWebhook",
+        TELEGRAM_API_TIMEOUT_MS,
+        bot.telegram.deleteWebhook({ drop_pending_updates: false }),
+      );
+    } catch {}
+
+    await withTimeout(
+      "bot.launch",
+      TELEGRAM_API_TIMEOUT_MS,
+      bot.launch({ dropPendingUpdates: false }),
+    );
     telegramRuntimeMode = "polling";
     logger.info({ reason }, "Long-polling mode enabled");
   };
 
   const startTelegramRuntime = async (): Promise<void> => {
     startupAttempts += 1;
+    telegramRuntimeMode =
+      TELEGRAM_USE_WEBHOOK && APP_URL ? "webhook" : "polling";
+
     try {
-      await bot.telegram.setMyCommands([
-        { command: "start", description: "Start bot and onboarding" },
-        { command: "help", description: "Show command help" },
-        { command: "reset", description: "Reset chat history" },
-        { command: "model", description: "Show or switch model" },
-        { command: "settings", description: "Configure temperature and verbosity" },
-        { command: "export", description: "Export conversation data" },
-        { command: "stop", description: "Stop active streaming response" },
-      ]);
+      await withTimeout(
+        "setMyCommands",
+        TELEGRAM_API_TIMEOUT_MS,
+        bot.telegram.setMyCommands([
+          { command: "start", description: "Start bot and onboarding" },
+          { command: "help", description: "Show command help" },
+          { command: "reset", description: "Reset chat history" },
+          { command: "model", description: "Show or switch model" },
+          { command: "settings", description: "Configure temperature and verbosity" },
+          { command: "export", description: "Export conversation data" },
+          { command: "stop", description: "Stop active streaming response" },
+        ]),
+      );
     } catch (error) {
       logger.warn(
         { error: error instanceof Error ? error.stack : String(error) },
@@ -421,10 +461,18 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
         } else {
           const webhookUrl = `${APP_URL}/webhook`;
           try {
-            await bot.telegram.setWebhook(webhookUrl, {
-              drop_pending_updates: false,
-            });
-            const webhookInfo = await bot.telegram.getWebhookInfo();
+            await withTimeout(
+              "setWebhook",
+              TELEGRAM_API_TIMEOUT_MS,
+              bot.telegram.setWebhook(webhookUrl, {
+                drop_pending_updates: false,
+              }),
+            );
+            const webhookInfo = await withTimeout(
+              "getWebhookInfo",
+              TELEGRAM_API_TIMEOUT_MS,
+              bot.telegram.getWebhookInfo(),
+            );
             telegramRuntimeMode = "webhook";
             logger.info({ webhookUrl, webhookInfo }, "Webhook mode enabled");
           } catch (error) {
@@ -442,7 +490,11 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
         await startPolling("TELEGRAM_USE_WEBHOOK=false");
       }
 
-      const me = await bot.telegram.getMe();
+      const me = await withTimeout(
+        "getMe",
+        TELEGRAM_API_TIMEOUT_MS,
+        bot.telegram.getMe(),
+      );
       telegramRuntimeReady = true;
       startupAttempts = 0;
       lastTelegramStartupError = null;
