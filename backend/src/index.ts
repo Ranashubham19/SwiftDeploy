@@ -19,8 +19,6 @@ type AuthSessionUser = {
   email: string;
   name: string;
   photo?: string;
-  plan: "FREE";
-  isSubscribed: boolean;
 };
 
 declare module "express-session" {
@@ -86,6 +84,10 @@ const OPENROUTER_MAX_RETRIES = Math.max(
   0,
   Math.min(4, Number(process.env.OPENROUTER_MAX_RETRIES || 2)),
 );
+const OPENROUTER_RETRY_BASE_DELAY_MS = Math.max(
+  50,
+  Number(process.env.OPENROUTER_RETRY_BASE_DELAY_MS || 180),
+);
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const FRONTEND_LOGIN_URL = FRONTEND_URL
   ? `${FRONTEND_URL}/#/login`
@@ -101,6 +103,7 @@ const openRouter = new OpenRouterClient({
   title: "Telegram Chat Bot",
   timeoutMs: OPENROUTER_TIMEOUT_MS,
   maxRetries: OPENROUTER_MAX_RETRIES,
+  retryBaseDelayMs: OPENROUTER_RETRY_BASE_DELAY_MS,
 });
 
 const store = new MemoryStore(prisma);
@@ -245,8 +248,6 @@ app.get("/auth/google/callback", async (req, res) => {
       email: userInfo.email.toLowerCase(),
       name: userInfo.name || userInfo.email.split("@")[0],
       photo: userInfo.picture,
-      plan: "FREE",
-      isSubscribed: false,
     };
     req.session.oauthState = undefined;
     req.session.save(() => {
@@ -300,8 +301,6 @@ app.post("/auth/google/access-token", async (req, res) => {
       email: userInfo.email.toLowerCase(),
       name: userInfo.name || userInfo.email.split("@")[0],
       photo: userInfo.picture,
-      plan: "FREE",
-      isSubscribed: false,
     };
     req.session.authUser = user;
     req.session.save(() => {

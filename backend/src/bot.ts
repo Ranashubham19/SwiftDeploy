@@ -32,7 +32,21 @@ type BotBuildOptions = {
 };
 
 const RECENT_CONTEXT_MESSAGES = 12;
+const FAST_RECENT_CONTEXT_MESSAGES = Math.max(
+  4,
+  Math.min(
+    RECENT_CONTEXT_MESSAGES,
+    Number(process.env.FAST_RECENT_CONTEXT_MESSAGES || "8"),
+  ),
+);
 const TELEGRAM_CHUNK_LIMIT = 3500;
+const STREAM_PREVIEW_MAX_CHARS = Math.max(
+  700,
+  Math.min(
+    TELEGRAM_CHUNK_LIMIT,
+    Number(process.env.STREAM_PREVIEW_MAX_CHARS || "1600"),
+  ),
+);
 const REPLY_STICKER_IDS = (process.env.TG_STICKER_REPLY_IDS || "")
   .split(",")
   .map((value) => value.trim())
@@ -41,9 +55,33 @@ const REPLY_STICKER_PROBABILITY = Math.max(
   0,
   Math.min(1, Number(process.env.TG_STICKER_REPLY_PROBABILITY || "1")),
 );
+const PROFESSIONAL_MODEL_RECOVERY_MESSAGE =
+  "I could not generate a complete response right now. Could you please share your question in a little more detail? I will answer it clearly in a structured format.";
+const PROVIDER_CREDIT_FAILURE_MARKERS = [
+  "openrouter credits are insufficient",
+  "please add credits or switch to a free model",
+  "insufficient credits",
+  "insufficient_quota",
+  "payment required",
+];
+const LEGACY_BLOCK_PATTERNS = [
+  /service temporarily unavailable/i,
+  /service unavailable/i,
+  /please try again later/i,
+];
+const LEGACY_BLOCK_FALLBACK =
+  "Service is active. Please send your question again.";
 const MAX_CONTINUATION_ROUNDS = Math.max(
   0,
   Math.min(2, Number(process.env.MAX_CONTINUATION_ROUNDS || "1")),
+);
+const MAX_TOOL_ROUNDS = Math.max(
+  1,
+  Math.min(2, Number(process.env.MAX_TOOL_ROUNDS || "1")),
+);
+const MAX_MODEL_ATTEMPTS = Math.max(
+  1,
+  Math.min(6, Number(process.env.MAX_MODEL_ATTEMPTS || "2")),
 );
 const detailedPromptPattern =
   /\b(explain|detailed|detail|step by step|deep dive|comprehensive|teach|breakdown|why|how)\b/i;
@@ -54,8 +92,16 @@ const TYPEWRITER_CHARS_PER_TICK = Math.max(
   Math.min(220, Number(process.env.TYPEWRITER_CHARS_PER_TICK || "104")),
 );
 const TYPEWRITER_TICK_MS = Math.max(
-  6,
-  Math.min(80, Number(process.env.TYPEWRITER_TICK_MS || "8")),
+  2,
+  Math.min(80, Number(process.env.TYPEWRITER_TICK_MS || "4")),
+);
+const SIMULATED_STREAM_CHUNK_SIZE = Math.max(
+  48,
+  Math.min(280, Number(process.env.SIMULATED_STREAM_CHUNK_SIZE || "180")),
+);
+const SIMULATED_STREAM_DELAY_MS = Math.max(
+  0,
+  Math.min(40, Number(process.env.SIMULATED_STREAM_DELAY_MS || "4")),
 );
 const CODE_FILE_EXPORT_ENABLED =
   (process.env.CODE_FILE_EXPORT_ENABLED || "true").toLowerCase() !== "false";
@@ -190,16 +236,42 @@ const createSettingsKeyboard = () =>
     [Markup.button.callback("Switch model", "action:switch-model")],
   ]);
 
+const isProviderCreditFailureText = (text: string): boolean => {
+  const normalized = (text || "").toLowerCase();
+  return PROVIDER_CREDIT_FAILURE_MARKERS.some((marker) =>
+    normalized.includes(marker),
+  );
+};
+
+const normalizeLegacyBlockedForUser = (text: string): string => {
+  const raw = String(text || "").trim();
+  if (!raw) return raw;
+  const matches = LEGACY_BLOCK_PATTERNS.reduce(
+    (count, pattern) => (pattern.test(raw) ? count + 1 : count),
+    0,
+  );
+  if (matches < 2) return raw;
+  return LEGACY_BLOCK_FALLBACK;
+};
+
+const normalizeProviderFailureForUser = (text: string): string => {
+  const normalized = normalizeLegacyBlockedForUser(text);
+  return isProviderCreditFailureText(normalized)
+    ? PROFESSIONAL_MODEL_RECOVERY_MESSAGE
+    : normalized;
+};
+
 const safeReplyText = async (
   ctx: BotContext,
   text: string,
 ): Promise<void> => {
+  const normalizedText = normalizeProviderFailureForUser(text);
   try {
-    await ctx.reply(text, {
+    await ctx.reply(normalizedText, {
       link_preview_options: { is_disabled: true },
     });
   } catch {
-    await ctx.reply(text).catch(() => {});
+    await ctx.reply(normalizedText).catch(() => {});
   }
 };
 
@@ -207,14 +279,15 @@ const safeReplyAndGetMessageId = async (
   ctx: BotContext,
   text: string,
 ): Promise<number | null> => {
+  const normalizedText = normalizeProviderFailureForUser(text);
   try {
-    const response = await ctx.reply(text, {
+    const response = await ctx.reply(normalizedText, {
       link_preview_options: { is_disabled: true },
     });
     return (response as { message_id?: number })?.message_id ?? null;
   } catch {
     try {
-      const response = await ctx.reply(text);
+      const response = await ctx.reply(normalizedText);
       return (response as { message_id?: number })?.message_id ?? null;
     } catch {
       return null;
@@ -227,13 +300,14 @@ const safeEditText = async (
   messageId: number,
   text: string,
 ): Promise<void> => {
+  const normalizedText = normalizeProviderFailureForUser(text);
   try {
-    await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, text, {
+    await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, normalizedText, {
       link_preview_options: { is_disabled: true },
     });
   } catch {
     try {
-      await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, text);
+      await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, normalizedText);
     } catch {}
   }
 };
@@ -248,18 +322,32 @@ const sendReplySticker = async (ctx: BotContext): Promise<void> => {
   await ctx.replyWithDice({ emoji: "🎯" }).catch(() => {});
 };
 
+const buildStreamingPreview = (fullText: string): string => {
+  const normalized = fullText || "";
+  if (normalized.length <= STREAM_PREVIEW_MAX_CHARS) {
+    return normalized.slice(0, TELEGRAM_CHUNK_LIMIT);
+  }
+  const header = "Live preview (latest section):\n";
+  const roomForTail = Math.max(200, TELEGRAM_CHUNK_LIMIT - header.length);
+  const tail = normalized.slice(-Math.min(STREAM_PREVIEW_MAX_CHARS, roomForTail));
+  return `${header}${tail}`;
+};
+
 const simulateStreaming = async (
   text: string,
   signal: AbortSignal | undefined,
   onDelta: (value: string) => Promise<void>,
 ): Promise<void> => {
-  const chunks = text.match(/.{1,72}/g) ?? [text];
+  const chunkPattern = new RegExp(`.{1,${SIMULATED_STREAM_CHUNK_SIZE}}`, "g");
+  const chunks = text.match(chunkPattern) ?? [text];
   for (const chunk of chunks) {
     if (signal?.aborted) {
       throw new Error("aborted");
     }
     await onDelta(chunk);
-    await new Promise((resolve) => setTimeout(resolve, 16));
+    if (SIMULATED_STREAM_DELAY_MS > 0) {
+      await new Promise((resolve) => setTimeout(resolve, SIMULATED_STREAM_DELAY_MS));
+    }
   }
 };
 
@@ -307,10 +395,9 @@ const describeGenerationError = (error: unknown): string => {
     status === 402 ||
     normalized.includes("insufficient credits") ||
     normalized.includes("insufficient_quota") ||
-    normalized.includes("payment required") ||
-    normalized.includes("billing")
+    normalized.includes("payment required")
   ) {
-    return "OpenRouter credits are insufficient. Please add credits or switch to a free model, then try again.";
+    return PROFESSIONAL_MODEL_RECOVERY_MESSAGE;
   }
   if (status === 429 || normalized.includes("rate limit")) {
     return "OpenRouter rate limit is active right now. Please wait 30-60 seconds and retry.";
@@ -350,7 +437,7 @@ const buildModelAttempts = (primaryModelId: string, fallbackModelId: string): st
       unique.push(modelId);
     }
   }
-  return unique;
+  return unique.slice(0, MAX_MODEL_ATTEMPTS);
 };
 
 type CodeArtifact = {
@@ -735,14 +822,6 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         content: trimmedInput,
       });
 
-      const refreshedBefore = await options.store.refreshChat(chatInfo.chat.id);
-      const currentChat = refreshedBefore ?? chatInfo.chat;
-
-      const memories = await options.store.getMemories(chatInfo.chat.id);
-      const recentMessages = await options.store.getRecentMessages(
-        chatInfo.chat.id,
-        RECENT_CONTEXT_MESSAGES,
-      );
       const intent = forceVision ? "general" : detectIntent(trimmedInput);
 
       if (intent === "ambiguous_python") {
@@ -755,6 +834,21 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         await ctx.reply(clarification);
         return;
       }
+
+      const typingStop = startTypingIndicator(ctx);
+      const placeholder = await ctx.reply("Thinking...");
+      const detailedRequest =
+        detailedPromptPattern.test(trimmedInput) || trimmedInput.length > 350;
+      const recentContextLimit = detailedRequest
+        ? RECENT_CONTEXT_MESSAGES
+        : FAST_RECENT_CONTEXT_MESSAGES;
+
+      const [refreshedBefore, memories, recentMessages] = await Promise.all([
+        options.store.refreshChat(chatInfo.chat.id),
+        options.store.getMemories(chatInfo.chat.id),
+        options.store.getRecentMessages(chatInfo.chat.id, recentContextLimit),
+      ]);
+      const currentChat = refreshedBefore ?? chatInfo.chat;
 
       const route = routeModel(currentChat.currentModel, intent);
       const fastCodeModelId = (process.env.MODEL_CODE_FAST_ID || "").trim();
@@ -803,8 +897,6 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
 
       messages.push(...recentMessages);
 
-      const typingStop = startTypingIndicator(ctx);
-      const placeholder = await ctx.reply("Thinking...");
       let outputBuffer = "";
       let lastEditAt = 0;
       let finalized = false;
@@ -812,6 +904,8 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       let sawLiveDelta = false;
       let flushInFlight = false;
       let flushQueued = false;
+      let lastPreview = "";
+      let generationErrored = false;
       let activeModelId = route.modelId;
       const fallbackModelId = (
         process.env.FALLBACK_MODEL ||
@@ -857,7 +951,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
               "Model attempt failed",
             );
 
-            // Auth/billing errors are account-level, trying more models will not help.
+            // Auth/provider errors are account-level, trying more models will not help.
             if (status === 401 || status === 402 || status === 403) {
               break;
             }
@@ -870,8 +964,9 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       const flush = async (force = false): Promise<void> => {
         if (finalized) return;
         const now = Date.now();
-        const preview = outputBuffer.slice(0, TELEGRAM_CHUNK_LIMIT);
+        const preview = buildStreamingPreview(outputBuffer);
         if (!preview.trim()) return;
+        if (preview === lastPreview) return;
         if (!force && now - lastEditAt < options.streamEditIntervalMs) {
           flushQueued = true;
           return;
@@ -883,6 +978,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         flushInFlight = true;
         lastEditAt = now;
         await safeEditText(ctx, placeholder.message_id, preview);
+        lastPreview = preview;
         flushInFlight = false;
         if (flushQueued && !finalized) {
           flushQueued = false;
@@ -910,7 +1006,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         let precomputedText: string | null = null;
 
         if (useTools) {
-          for (let round = 0; round < 2; round += 1) {
+          for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
             const decision = await callWithFallback((modelId) =>
               options.openRouter.chatCompletion(
                 {
@@ -1067,6 +1163,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         if (isAbortError(error)) {
           stopped = true;
         } else {
+          generationErrored = true;
           const status = extractErrorStatus(error);
           logger.error(
             {
@@ -1089,17 +1186,23 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
         outputBuffer = `${outputBuffer.trim()}\n\n[stopped]`.trim();
       }
       if (!outputBuffer.trim()) {
+        generationErrored = true;
         outputBuffer =
           "I hit an issue generating a reply. Please try again in a moment.";
+      }
+
+      if (isProviderCreditFailureText(outputBuffer)) {
+        generationErrored = true;
+        outputBuffer = PROFESSIONAL_MODEL_RECOVERY_MESSAGE;
       }
 
       const rawModelOutput = outputBuffer;
       const canAttachCodeFile =
         CODE_FILE_EXPORT_ENABLED &&
+        !generationErrored &&
+        !stopped &&
         intent === "coding" &&
-        !/issue generating a reply|authentication failed|credits are insufficient/i.test(
-          rawModelOutput,
-        );
+        rawModelOutput.trim().length > 0;
       const codeArtifact = canAttachCodeFile
         ? extractCodeArtifact(rawModelOutput, trimmedInput)
         : null;
@@ -1151,7 +1254,7 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
       }
 
       const shouldSendSticker =
-        !/issue generating a reply/i.test(outputBuffer) &&
+        !generationErrored &&
         Math.random() < REPLY_STICKER_PROBABILITY;
       if (shouldSendSticker) {
         await sendReplySticker(ctx);

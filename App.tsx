@@ -3,7 +3,6 @@ import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
-import Billing from './pages/Billing';
 import ConnectTelegram from './pages/ConnectTelegram';
 import ConnectDiscord from './pages/ConnectDiscord';
 import TelegramPairing from './pages/TelegramPairing';
@@ -93,9 +92,7 @@ const App: React.FC = () => {
             const restoredUser: User = {
               id: data.user.id,
               email: data.user.email,
-              name: data.user.name,
-              plan: data.user.plan || 'FREE',
-              isSubscribed: Boolean(data.user.isSubscribed)
+              name: data.user.name
             };
             setUser(restoredUser);
             await loadBots();
@@ -136,7 +133,6 @@ const App: React.FC = () => {
           <Route path="/contact" element={<Contact />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
-          <Route path="/billing" element={user ? <Billing user={user} /> : <Navigate to="/login" />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>

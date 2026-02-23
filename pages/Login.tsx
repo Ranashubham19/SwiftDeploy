@@ -111,9 +111,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         onLogin({
           id: data.user.id,
           email: data.user.email,
-          name: data.user.name,
-          plan: data.user.plan || 'FREE',
-          isSubscribed: Boolean(data.user.isSubscribed)
+          name: data.user.name
         });
         navigate('/', { replace: true });
       } catch {
@@ -150,15 +148,13 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     };
   };
 
-  const finalizeLogin = (authUser?: { id?: string; email: string; name?: string; plan?: User['plan']; isSubscribed?: boolean }) => {
+  const finalizeLogin = (authUser?: { id?: string; email: string; name?: string }) => {
     const email = authUser?.email || formData.email.trim().toLowerCase();
     const name = authUser?.name || email.split('@')[0];
     onLogin({
       id: authUser?.id || `node_${Math.random().toString(36).slice(2, 11)}`,
       email,
-      name,
-      plan: authUser?.plan || 'FREE',
-      isSubscribed: Boolean(authUser?.isSubscribed)
+      name
     });
     setIsSubmitting(false);
     navigate('/', { replace: true });

@@ -13,7 +13,7 @@ import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPend
 import { generateBotResponse, estimateTokens, needsRealtimeSearch, type AIRuntimeConfig } from './geminiService.js';
 import { Request } from 'express';
 import bcrypt from 'bcrypt';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 const envCandidates = [
   path.resolve(process.cwd(), '.env'),
@@ -59,8 +59,6 @@ declare global {
       email: string;
       name: string;
       photo?: string;
-      plan?: 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
-      isSubscribed?: boolean;
     }
     
     interface Request {
@@ -108,10 +106,9 @@ const INITIAL_BOT_CREDIT_USD = 10;
 const CREDIT_DEDUCT_INTERVAL_MS = 36 * 60 * 60 * 1000;
 const CREDIT_DEDUCT_AMOUNT_USD = 1;
 const BOT_CREDIT_POLICY_VERSION = 2;
-const CREDIT_ENFORCEMENT_ENABLED = (process.env.BOT_CREDIT_ENFORCEMENT_ENABLED || 'true').trim().toLowerCase() === 'true';
-const CREDIT_ENFORCEMENT_PAUSED = (process.env.BOT_CREDIT_ENFORCEMENT_PAUSED || 'false').trim().toLowerCase() !== 'false';
-const CREDIT_ENFORCEMENT_ACTIVE = CREDIT_ENFORCEMENT_ENABLED && !CREDIT_ENFORCEMENT_PAUSED;
-const processedCreditSessions = new Set<string>();
+const CREDIT_ENFORCEMENT_ENABLED = false;
+const CREDIT_ENFORCEMENT_PAUSED = true;
+const CREDIT_ENFORCEMENT_ACTIVE = false;
 type TelegramBotConfig = {
   botId: string;
   botToken: string;
@@ -205,34 +202,6 @@ const USER_PROFILE_FILE = (process.env.USER_PROFILE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-user-profiles.json')
     : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-user-profiles.json'));
-const FREE_TRIAL_DAYS = 7;
-type PlanType = 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
-type BillingTier = 'STARTER' | 'PRO' | 'ENTERPRISE';
-type SubscriptionState = {
-  plan: PlanType;
-  isSubscribed: boolean;
-  freeDeployCount: number;
-  freeTrialEndsAt: number;
-};
-const userSubscriptionState = new Map<string, SubscriptionState>();
-const SUBSCRIPTION_STATE_FILE = (process.env.SUBSCRIPTION_STATE_FILE || '').trim()
-  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
-    ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-subscriptions.json')
-    : path.resolve(process.cwd(), 'runtime', 'swiftdeploy-subscriptions.json'));
-const TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS = Math.max(100, parseInt(process.env.TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS || '2900', 10));
-const TELEGRAM_SUBSCRIPTION_INTERVAL = (process.env.TELEGRAM_SUBSCRIPTION_INTERVAL || 'month').trim().toLowerCase() === 'year' ? 'year' : 'month';
-const TELEGRAM_SUBSCRIPTION_LABEL = (process.env.TELEGRAM_SUBSCRIPTION_LABEL || 'SwiftDeploy').trim() || 'SwiftDeploy';
-const TELEGRAM_SUBSCRIPTION_DESCRIPTION = (process.env.TELEGRAM_SUBSCRIPTION_DESCRIPTION || 'SwiftDeploy Pro Plan').trim();
-type PendingTelegramDeployIntent = {
-  intentId: string;
-  userEmail: string;
-  botToken: string;
-  selectedModel: string;
-  createdAt: number;
-};
-const pendingTelegramDeployIntents = new Map<string, PendingTelegramDeployIntent>();
-const processedTelegramSubscriptionSessions = new Map<string, { intentId: string; userEmail: string; deployed: boolean; processedAt: number; deployPayload?: any }>();
-const PENDING_TELEGRAM_INTENT_TTL_MS = 2 * 60 * 60 * 1000;
 type AutomationTrigger = 'KEYWORD' | 'MENTION' | 'SILENCE_GAP' | 'HIGH_VOLUME';
 type AutomationAction = 'AUTO_REPLY' | 'ESCALATE' | 'TAG' | 'DELAY_REPLY';
 type AutomationRule = {
@@ -251,95 +220,6 @@ type AutomationRule = {
 };
 const automationRulesByUser = new Map<string, AutomationRule[]>();
 
-const ensureUserSubscriptionState = (email: string): SubscriptionState => {
-  const normalized = email.trim().toLowerCase();
-  const existing = userSubscriptionState.get(normalized);
-  if (existing) return existing;
-  const fresh: SubscriptionState = {
-    plan: 'FREE',
-    isSubscribed: false,
-    freeDeployCount: 0,
-    freeTrialEndsAt: Date.now() + FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000
-  };
-  userSubscriptionState.set(normalized, fresh);
-  return fresh;
-};
-
-const persistSubscriptionState = (): void => {
-  try {
-    const dir = path.dirname(SUBSCRIPTION_STATE_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const serialized = JSON.stringify(
-      Object.fromEntries(Array.from(userSubscriptionState.entries()).map(([email, state]) => [String(email), state])),
-      null,
-      2
-    );
-    fs.writeFileSync(SUBSCRIPTION_STATE_FILE, serialized, 'utf8');
-  } catch (error) {
-    console.warn('[SUBSCRIPTION] Failed to persist subscriptions:', (error as Error).message);
-  }
-};
-
-const loadSubscriptionState = (): void => {
-  try {
-    if (!fs.existsSync(SUBSCRIPTION_STATE_FILE)) return;
-    const raw = fs.readFileSync(SUBSCRIPTION_STATE_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as Record<string, SubscriptionState>;
-    for (const [email, state] of Object.entries(parsed || {})) {
-      const normalized = String(email || '').trim().toLowerCase();
-      if (!normalized) continue;
-      const plan = String(state?.plan || 'FREE').trim().toUpperCase() as PlanType;
-      const safePlan: PlanType = plan === 'PRO_MONTHLY' || plan === 'PRO_YEARLY' || plan === 'CUSTOM' ? plan : 'FREE';
-      userSubscriptionState.set(normalized, {
-        plan: safePlan,
-        isSubscribed: Boolean(state?.isSubscribed) || safePlan !== 'FREE',
-        freeDeployCount: Math.max(0, Math.floor(Number(state?.freeDeployCount || 0))),
-        freeTrialEndsAt: Math.max(0, Number(state?.freeTrialEndsAt || Date.now()))
-      });
-    }
-  } catch (error) {
-    console.warn('[SUBSCRIPTION] Failed to load subscriptions:', (error as Error).message);
-  }
-};
-
-const setUserPlan = (email: string, plan: PlanType): SubscriptionState => {
-  const state = ensureUserSubscriptionState(email);
-  const next: SubscriptionState = {
-    ...state,
-    plan,
-    isSubscribed: plan !== 'FREE'
-  };
-  userSubscriptionState.set(email.trim().toLowerCase(), next);
-  persistSubscriptionState();
-  return next;
-};
-
-const purgeExpiredTelegramDeployIntents = (): void => {
-  const now = Date.now();
-  for (const [intentId, intent] of pendingTelegramDeployIntents.entries()) {
-    if (!intent?.createdAt || now - intent.createdAt > PENDING_TELEGRAM_INTENT_TTL_MS) {
-      pendingTelegramDeployIntents.delete(intentId);
-    }
-  }
-};
-
-const userHasAnyDeployedTelegramBot = (email: string): boolean => {
-  const normalized = String(email || '').trim().toLowerCase();
-  if (!normalized) return false;
-  for (const owner of telegramBotOwners.values()) {
-    if (String(owner || '').trim().toLowerCase() === normalized) return true;
-  }
-  const state = loadPersistedBotState();
-  if (state.telegramBots.some((b) => String(b?.ownerEmail || '').trim().toLowerCase() === normalized)) return true;
-  return false;
-};
-
-const requiresTelegramSubscription = (email: string): boolean => {
-  const normalized = String(email || '').trim().toLowerCase();
-  if (!normalized) return true;
-  return !ensureUserSubscriptionState(normalized).isSubscribed;
-};
-
 const getAutomationRulesForUser = (email: string): AutomationRule[] => {
   const key = email.trim().toLowerCase();
   const existing = automationRulesByUser.get(key);
@@ -348,7 +228,7 @@ const getAutomationRulesForUser = (email: string): AutomationRule[] => {
     {
       id: randomUUID(),
       name: 'Pricing Intent Fast Reply',
-      description: 'Auto reply with plan summary when user mentions pricing keywords.',
+      description: 'Auto reply with a concise product summary when pricing keywords are detected.',
       trigger: 'KEYWORD',
       action: 'AUTO_REPLY',
       keyword: 'pricing',
@@ -584,7 +464,7 @@ const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
 
 const app = express();
 const startedAtIso = new Date().toISOString();
-const BOT_LOGIC_VERSION = 'model_only_v7_provider_guard_2026-02-22';
+const BOT_LOGIC_VERSION = 'model_only_v9_core_2026-02-23';
 if (isProduction) {
   app.set('trust proxy', 1);
 }
@@ -622,6 +502,9 @@ const AI_ENABLE_SELF_VERIFY = (process.env.AI_ENABLE_SELF_VERIFY || (FAST_REPLY_
 const TELEGRAM_STREAMING_ENABLED = false;
 const TELEGRAM_STREAM_START_DELAY_MS = parseInt(process.env.TELEGRAM_STREAM_START_DELAY_MS || '700', 10);
 const TELEGRAM_STREAM_PROGRESS_INTERVAL_MS = parseInt(process.env.TELEGRAM_STREAM_PROGRESS_INTERVAL_MS || '3500', 10);
+const TELEGRAM_WEBHOOK_MAX_RETRIES = Math.max(1, Math.min(8, parseInt(process.env.TELEGRAM_WEBHOOK_MAX_RETRIES || '4', 10)));
+const TELEGRAM_WEBHOOK_RETRY_BASE_MS = Math.max(250, parseInt(process.env.TELEGRAM_WEBHOOK_RETRY_BASE_MS || '900', 10));
+const TELEGRAM_WEBHOOK_RESTORE_DELAY_MS = Math.max(0, parseInt(process.env.TELEGRAM_WEBHOOK_RESTORE_DELAY_MS || '250', 10));
 const WEBHOOK_SECRET_MASTER = String(process.env.TELEGRAM_WEBHOOK_SECRET || SESSION_SECRET || '').trim();
 const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim();
 
@@ -645,65 +528,19 @@ const resolveUsableProvider = (preferredProvider?: string): string | undefined =
 };
 
 // Rate limiting configuration
+const getRequestIp = (req: express.Request): string => {
+  return String(req.ip || req.socket?.remoteAddress || '').trim();
+};
+
+const buildIpRateLimitKey = (scope: string, req: express.Request): string => {
+  return `${scope}:ip:${ipKeyGenerator(getRequestIp(req)) || 'unknown'}`;
+};
+
 const authRateLimit = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 5, // Limit each IP to 5 requests per windowMs
   message: {
     message: 'Too many requests'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const normalizeSecret = (raw: string): string => {
-  const trimmed = String(raw || '').trim();
-  if (!trimmed) return '';
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-};
-
-const getStripeSecretKey = (): string => {
-  const explicit = normalizeSecret(
-    process.env.STRIPE_SECRET_KEY ||
-    process.env.STRIPE_SECRET ||
-    ''
-  );
-  if (explicit.startsWith('sk_')) {
-    return explicit;
-  }
-
-  // Fallback: auto-detect misnamed Stripe secret variables in hosting dashboards.
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!/STRIPE/i.test(key)) continue;
-    if (!/(SECRET|KEY)/i.test(key)) continue;
-    const normalized = normalizeSecret(String(value || ''));
-    if (normalized.startsWith('sk_')) {
-      return normalized;
-    }
-  }
-
-  return explicit;
-};
-
-const billingRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  keyGenerator: (req) => {
-    const reqUser = req.user as Express.User | undefined;
-    const email = (reqUser?.email || '').trim().toLowerCase();
-    if (email) {
-      return `billing:user:${email}`;
-    }
-    return `billing:ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
-  },
-  skipSuccessfulRequests: true,
-  message: {
-    message: 'Too many checkout attempts. Please wait and try again.'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -716,7 +553,7 @@ const deployRateLimit = rateLimit({
     const reqUser = req.user as Express.User | undefined;
     const email = (reqUser?.email || '').trim().toLowerCase();
     if (email) return `deploy:user:${email}`;
-    return `deploy:ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+    return buildIpRateLimitKey('deploy', req);
   },
   message: { message: 'Too many deploy attempts. Please wait and try again.' },
   standardHeaders: true,
@@ -755,6 +592,72 @@ const buildTelegramWebhookSecret = (botId: string): string => {
     .update(`telegram-webhook:${botId}`)
     .digest('hex')
     .slice(0, 48);
+};
+
+const waitMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parseTelegramRetryAfterSeconds = (data: any): number => {
+  const rawFromParams = Number(data?.parameters?.retry_after || 0);
+  if (Number.isFinite(rawFromParams) && rawFromParams > 0) {
+    return Math.ceil(rawFromParams);
+  }
+  const description = String(data?.description || '');
+  const match = description.match(/retry after\s+(\d+)/i);
+  if (!match) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.ceil(parsed) : 0;
+};
+
+const setTelegramWebhookWithRetry = async (
+  botToken: string,
+  botId: string,
+  webhookUrl: string,
+  secretToken: string
+): Promise<{ success: boolean; data?: any; error?: string }> => {
+  const setWebhookUrl = `https://api.telegram.org/bot${botToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}${secretToken ? `&secret_token=${encodeURIComponent(secretToken)}` : ''}`;
+
+  for (let attempt = 1; attempt <= TELEGRAM_WEBHOOK_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(setWebhookUrl);
+      const data: any = await response.json().catch(() => ({}));
+      console.log(`[WEBHOOK] Telegram API Response for ${botId}:`, data);
+
+      if (data?.ok) {
+        console.log(`[WEBHOOK] Successfully set webhook for bot ${botId}`);
+        return { success: true, data };
+      }
+
+      const retryAfterSeconds = parseTelegramRetryAfterSeconds(data);
+      if (retryAfterSeconds > 0 && attempt < TELEGRAM_WEBHOOK_MAX_RETRIES) {
+        const jitter = Math.floor(Math.random() * 200);
+        const nextWaitMs = retryAfterSeconds * 1000 + jitter;
+        console.warn(`[WEBHOOK] Rate limited while setting bot ${botId}; retrying in ${nextWaitMs}ms (attempt ${attempt}/${TELEGRAM_WEBHOOK_MAX_RETRIES}).`);
+        await waitMs(nextWaitMs);
+        continue;
+      }
+
+      if (attempt < TELEGRAM_WEBHOOK_MAX_RETRIES) {
+        const nextWaitMs = TELEGRAM_WEBHOOK_RETRY_BASE_MS * attempt;
+        console.warn(`[WEBHOOK] Failed to set webhook for bot ${botId}; retrying in ${nextWaitMs}ms (attempt ${attempt}/${TELEGRAM_WEBHOOK_MAX_RETRIES}):`, data?.description || 'Unknown error');
+        await waitMs(nextWaitMs);
+        continue;
+      }
+
+      console.error(`[WEBHOOK] Failed to set webhook for bot ${botId}:`, data?.description || 'Unknown error');
+      return { success: false, error: data?.description || 'Unknown error' };
+    } catch (error) {
+      if (attempt < TELEGRAM_WEBHOOK_MAX_RETRIES) {
+        const nextWaitMs = TELEGRAM_WEBHOOK_RETRY_BASE_MS * attempt;
+        console.warn(`[WEBHOOK] Error setting webhook for bot ${botId}; retrying in ${nextWaitMs}ms (attempt ${attempt}/${TELEGRAM_WEBHOOK_MAX_RETRIES}):`, (error as Error).message);
+        await waitMs(nextWaitMs);
+        continue;
+      }
+      console.error(`[WEBHOOK] Error setting webhook for bot ${botId}:`, error);
+      return { success: false, error: (error as Error).message || 'Unknown error' };
+    }
+  }
+
+  return { success: false, error: 'Webhook retries exhausted' };
 };
 
 const verifyTelegramWebhookRequest = (req: express.Request, botId: string): boolean => {
@@ -926,27 +829,9 @@ declare global {
 
   const webhookUrl = `${BASE_URL}/webhook/${botId}`;
   const secretToken = buildTelegramWebhookSecret(botId);
-  const setWebhookUrl = `https://api.telegram.org/bot${botToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}${secretToken ? `&secret_token=${encodeURIComponent(secretToken)}` : ''}`;
   
   console.log(`[WEBHOOK] Setting webhook for bot ${botId}: ${webhookUrl}`);
-  
-  try {
-    const response = await fetch(setWebhookUrl);
-    const data: any = await response.json();
-    
-    console.log(`[WEBHOOK] Telegram API Response for ${botId}:`, data);
-    
-    if (data.ok) {
-      console.log(`[WEBHOOK] Successfully set webhook for bot ${botId}`);
-      return { success: true, data };
-    } else {
-      console.error(`[WEBHOOK] Failed to set webhook for bot ${botId}:`, data.description);
-      return { success: false, error: data.description };
-    }
-  } catch (error) {
-    console.error(`[WEBHOOK] Error setting webhook for bot ${botId}:`, error);
-    return { success: false, error: (error as Error).message || 'Unknown error' };
-  }
+  return setTelegramWebhookWithRetry(botToken, botId, webhookUrl, secretToken);
 };
 
 /**
@@ -1334,6 +1219,9 @@ const restorePersistedBots = async (): Promise<void> => {
       } catch (error) {
         console.warn(`[BOT_STATE] Telegram webhook restore failed for ${botId}:`, (error as Error).message);
       }
+      if (TELEGRAM_WEBHOOK_RESTORE_DELAY_MS > 0) {
+        await waitMs(TELEGRAM_WEBHOOK_RESTORE_DELAY_MS);
+      }
     }
   }
 
@@ -1382,18 +1270,12 @@ const ensurePrimaryTelegramWebhook = async (): Promise<void> => {
   if (!isProduction || !TELEGRAM_TOKEN) return;
   const webhookUrl = `${BASE_URL}/webhook`;
   const secretToken = buildTelegramWebhookSecret('primary');
-  const registerUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}${secretToken ? `&secret_token=${encodeURIComponent(secretToken)}` : ''}`;
-  try {
-    const response = await fetch(registerUrl);
-    const data: any = await response.json().catch(() => ({}));
-    if (!data?.ok) {
-      console.warn('[WEBHOOK] Failed to auto-set primary Telegram webhook:', data?.description || 'Unknown error');
-      return;
-    }
-    console.log('[WEBHOOK] Primary Telegram webhook is active:', webhookUrl);
-  } catch (error) {
-    console.warn('[WEBHOOK] Primary Telegram webhook auto-setup failed:', (error as Error).message);
+  const result = await setTelegramWebhookWithRetry(TELEGRAM_TOKEN, 'primary', webhookUrl, secretToken);
+  if (!result.success) {
+    console.warn('[WEBHOOK] Failed to auto-set primary Telegram webhook:', result.error || 'Unknown error');
+    return;
   }
+  console.log('[WEBHOOK] Primary Telegram webhook is active:', webhookUrl);
 };
 
 const sanitizeForTelegram = (text: string): string => {
@@ -1940,8 +1822,26 @@ const splitTelegramMessage = (text: string, maxLen: number = TELEGRAM_MAX_MESSAG
   return parts;
 };
 
+const RESET_SUCCESS_MESSAGE =
+  'Conversation reset complete. Context cleared. Please send your next question.';
+
+const normalizeLegacyBlockedReply = (text: string): string => {
+  const raw = String(text || '').trim();
+  if (!raw) return raw;
+  return raw;
+};
+
+const extractTelegramCommand = (messageText: string): string | null => {
+  const normalized = String(messageText || '')
+    .replace(/^[\u200B-\u200F\uFEFF]+/g, '')
+    .trim();
+  if (!normalized) return null;
+  const cmd = normalized.match(/^\/([a-z]+)(?:@\w+)?(?:\s|$)/i)?.[1]?.toLowerCase();
+  return cmd || null;
+};
+
 const sendTelegramReply = async (targetBot: TelegramBot, chatId: number, text: string, replyTo?: number) => {
-  const safe = sanitizeForTelegram(stripReconnectLoopReply(text));
+  const safe = sanitizeForTelegram(stripReconnectLoopReply(normalizeLegacyBlockedReply(text)));
   const chunks = splitTelegramMessage(safe);
   for (let i = 0; i < chunks.length; i += 1) {
     const chunk = chunks[i];
@@ -1967,9 +1867,10 @@ const sendTelegramStreamingReply = async (
   targetBot: TelegramBot,
   chatId: number,
   responsePromise: Promise<string>,
-  replyTo?: number
+  replyTo?: number,
+  fallbackText?: string
 ): Promise<string> => {
-  const resolved = await responsePromise;
+  const resolved = normalizeLegacyBlockedReply(await responsePromise);
   await sendTelegramReply(targetBot, chatId, resolved, replyTo);
   return resolved;
 };
@@ -2018,7 +1919,7 @@ const clearConversationState = (conversationKey: string): void => {
 
 const getCommandReply = (messageText: string, conversationKey?: string): string | null => {
   const text = String(messageText || '').trim();
-  const cmd = text.match(/^\/([a-z]+)(?:@\w+)?\b/i)?.[1]?.toLowerCase();
+  const cmd = extractTelegramCommand(text);
   if (!cmd) return null;
   if (cmd === 'help') {
     return 'Commands:\n/start - welcome message\n/help - show commands\n/reset - clear chat memory\n/version - show active bot logic version\n/stickers on|off|status - sticker replies\n/emoji rich|minimal|status - emoji style\n\nAsk any question directly after these commands.';
@@ -2030,7 +1931,7 @@ const getCommandReply = (messageText: string, conversationKey?: string): string 
     if (conversationKey) {
       clearConversationState(conversationKey);
     }
-    return 'Your chat memory for this bot has been cleared. Start a new question.';
+    return RESET_SUCCESS_MESSAGE;
   }
   if (cmd === 'stickers') {
     const mode = (text.split(/\s+/)[1] || '').trim().toLowerCase();
@@ -2924,6 +2825,7 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
   const messageText = String(msg.text || '').trim();
   if (!messageText) return;
+  const incomingCommand = extractTelegramCommand(messageText);
 
   // Prevent dual processing when primary token is also deployed as a managed bot.
   const primaryToken = String(TELEGRAM_TOKEN || '').trim();
@@ -2934,14 +2836,29 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
   }
   
   console.log(`[TELEGRAM] Received message from ${msg.from?.username || 'Unknown'}: ${messageText}`);
+  const conversationKey = buildConversationKey('telegram:primary', chatId) || undefined;
+  if (incomingCommand === 'start') {
+    await sendTelegramReply(
+      bot,
+      chatId,
+      'Welcome. Send your question and I will provide a direct answer.',
+      msg.message_id
+    );
+    return;
+  }
+  const commandReply = getCommandReply(messageText, conversationKey);
+  if (commandReply) {
+    await sendTelegramReply(bot, chatId, commandReply, msg.message_id);
+    return;
+  }
   try {
     await bot.sendChatAction(chatId, 'typing');
-    const conversationKey = buildConversationKey('telegram:primary', chatId) || undefined;
     const response = await sendTelegramStreamingReply(
       bot,
       chatId,
       generateProfessionalReply(messageText, chatId, 'telegram:primary'),
-      msg.message_id
+      msg.message_id,
+      instantProfessionalReply(messageText) || generateEmergencyReply(messageText)
     );
     const stickersEnabled = FORCE_STICKERS_ON || (conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true);
     const stickerId = stickersEnabled ? pickStickerForContext(messageText, response) : '';
@@ -2962,30 +2879,27 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   const chatId = msg.chat.id;
   const text = String(msg.text || '').trim();
   const botId = getBotIdByTelegramToken(botToken);
+  const incomingCommand = extractTelegramCommand(text);
 
   if (!text) return;
-  if (botId) {
-    const ownerEmail = (telegramBotOwners.get(botId) || getPersistedTelegramOwner(botId) || '').trim().toLowerCase();
-    if (ownerEmail && !telegramBotOwners.has(botId)) {
-      telegramBotOwners.set(botId, ownerEmail);
-    }
-    if (!ownerEmail || !ensureUserSubscriptionState(ownerEmail).isSubscribed) {
-      const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
-      if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
-      await sendTelegramReply(
-        botInstance,
-        chatId,
-        'Your subscription is inactive. Please renew your plan from the dashboard to continue AI bot access.',
-        msg.message_id
-      );
-      return;
-    }
+  let botInstance = managedBots.get(botToken);
+  if (!botInstance) {
+    botInstance = new TelegramBot(botToken, { polling: false });
+    managedBots.set(botToken, botInstance);
   }
+
+  const botScope = `telegram:${botId || botToken.slice(0, 12)}`;
+  const conversationKey = buildConversationKey(botScope, chatId) || undefined;
+  const commandReply = getCommandReply(text, conversationKey);
+  if (commandReply) {
+    await sendTelegramReply(botInstance, chatId, commandReply, msg.message_id);
+    if (botId) recordBotResponse(botId, commandReply, 0);
+    return;
+  }
+
   if (botId && CREDIT_ENFORCEMENT_ACTIVE) {
     const credit = applyCreditDecay(botId);
     if (credit.depleted || credit.remainingUsd <= 0) {
-      const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
-      if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
       await sendTelegramReply(
         botInstance,
         chatId,
@@ -2997,8 +2911,6 @@ const handleBotMessage = async (botToken: string, msg: any) => {
     }
   }
   if (text.length > MAX_USER_PROMPT_LENGTH) {
-    const botInstance = managedBots.get(botToken) || new TelegramBot(botToken, { polling: false });
-    if (!managedBots.has(botToken)) managedBots.set(botToken, botInstance);
     await sendTelegramReply(
       botInstance,
       chatId,
@@ -3009,15 +2921,7 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   }
   if (botId) recordBotIncoming(botId);
 
-  let botInstance = managedBots.get(botToken);
-  if (!botInstance) {
-    botInstance = new TelegramBot(botToken, { polling: false });
-    managedBots.set(botToken, botInstance);
-  }
-
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
-  const botScope = `telegram:${botId || botToken.slice(0, 12)}`;
-  const conversationKey = buildConversationKey(botScope, chatId) || undefined;
   let selectedProvider = String(botId ? (telegramBotAiProviders.get(botId) || '') : '').trim().toLowerCase();
   let selectedModel = String(botId ? (telegramBotAiModels.get(botId) || '') : '').trim();
   if (botId && (!selectedProvider || !selectedModel)) {
@@ -3034,16 +2938,10 @@ const handleBotMessage = async (botToken: string, msg: any) => {
     selectedModel = strictDefault.model;
   }
 
-  if (/^\/start(?:@\w+)?$/i.test(text)) {
+  if (incomingCommand === 'start') {
     const welcome = `AI Provider: ${selectedProvider}\nAI Model: ${selectedModel}\n\nSend a message to start chatting with AI.`;
     await botInstance.sendMessage(chatId, welcome);
     if (botId) recordBotResponse(botId, welcome, 0);
-    return;
-  }
-  const commandReply = getCommandReply(text, conversationKey);
-  if (commandReply) {
-    await sendTelegramReply(botInstance, chatId, commandReply, msg.message_id);
-    if (botId) recordBotResponse(botId, commandReply, 0);
     return;
   }
 
@@ -3058,7 +2956,8 @@ const handleBotMessage = async (botToken: string, msg: any) => {
         provider: selectedProvider,
         model: selectedModel
       }),
-      msg.message_id
+      msg.message_id,
+      instantProfessionalReply(text) || generateEmergencyReply(text)
     );
     const stickersEnabled = FORCE_STICKERS_ON || (conversationKey ? (userProfiles.get(conversationKey)?.stickersEnabled !== false) : true);
     const stickerId = stickersEnabled ? pickStickerForContext(text, aiReply) : '';
@@ -3396,13 +3295,6 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
   
   if (!botToken) return res.status(400).json({ error: 'Bot token is required' });
   if (!userEmail) return res.status(401).json({ error: 'Authentication required' });
-  if (requiresTelegramSubscription(userEmail)) {
-    return res.status(402).json({
-      success: false,
-      subscriptionRequired: true,
-      error: 'Subscription required before first deployment.'
-    });
-  }
 
   try {
     const payload = await deployTelegramBotForUser({
@@ -3928,14 +3820,11 @@ app.post('/verify-email', async (req, res) => {
   }
 
   const user = markEmailAsRegistered(email, pending.name, pending.passwordHash);
-  const subscription = setUserPlan(user.email, user.plan);
   const userInfo = {
     id: user.id,
     email: user.email,
     name: user.name,
-    photo: undefined,
-    plan: subscription.plan,
-    isSubscribed: subscription.isSubscribed
+    photo: undefined
   };
 
   (req as any).login(userInfo, (err: any) => {
@@ -4035,14 +3924,11 @@ app.post('/auth/google/access-token', async (req, res) => {
       return sendError(res, 401, 'Google account verification failed');
     }
 
-    const subscription = ensureUserSubscriptionState(String(profile.email).toLowerCase());
     const userInfo = {
       id: String(profile.sub),
       email: String(profile.email).toLowerCase(),
       name: String(profile.name || profile.email).trim(),
-      photo: profile.picture ? String(profile.picture) : undefined,
-      plan: subscription.plan,
-      isSubscribed: subscription.isSubscribed
+      photo: profile.picture ? String(profile.picture) : undefined
     };
 
     (req as any).login(userInfo, (err: any) => {
@@ -4089,18 +3975,11 @@ app.post('/login', async (req, res) => {
     return sendError(res, 401, 'Invalid email or password');
   }
   
-  const subscription = ensureUserSubscriptionState(user.email);
-  if (user.plan && user.plan !== subscription.plan) {
-    setUserPlan(user.email, user.plan as PlanType);
-  }
-  const latestSubscription = ensureUserSubscriptionState(user.email);
   const userInfo = {
     id: user.id,
     email: user.email,
     name: user.name,
-    photo: undefined,
-    plan: latestSubscription.plan,
-    isSubscribed: latestSubscription.isSubscribed
+    photo: undefined
   };
   
   (req as any).login(userInfo, (err: any) => {
@@ -4120,14 +3999,8 @@ app.post('/login', async (req, res) => {
 app.get('/me', (req, res) => {
   if (req.user) {
     const sessionUser = req.user as Express.User;
-    const email = (sessionUser.email || '').trim().toLowerCase();
-    const subscription = email ? ensureUserSubscriptionState(email) : { plan: 'FREE' as PlanType, isSubscribed: false };
     res.json({
-      user: {
-        ...sessionUser,
-        plan: subscription.plan,
-        isSubscribed: subscription.isSubscribed
-      }
+      user: sessionUser
     });
   } else {
     res.status(401).json({ message: 'Not authenticated' });
@@ -4303,20 +4176,6 @@ app.post('/ai/respond', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/plan/status', requireAuth, (req, res) => {
-  const user = req.user as Express.User;
-  const email = (user.email || '').trim().toLowerCase();
-  const subscription = ensureUserSubscriptionState(email);
-  return res.json({
-    success: true,
-    plan: subscription.plan,
-    isSubscribed: subscription.isSubscribed,
-    freeDeployCount: subscription.freeDeployCount,
-    freeDeployLimit: null,
-    freeTrialEndsAt: new Date(subscription.freeTrialEndsAt).toISOString()
-  });
-});
-
 app.post('/forgot-password/send-code', async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   if (!email) {
@@ -4390,577 +4249,6 @@ app.post('/forgot-password/reset', async (req, res) => {
   }
 });
 
-app.get('/billing/stripe-account', requireAuth, (req, res) => {
-  const stripeSecretKey = getStripeSecretKey();
-  const stripePublishableKey = (process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
-  const configured = stripeSecretKey.startsWith('sk_');
-  const publishableConfigured = stripePublishableKey.startsWith('pk_');
-  const mode = stripeSecretKey.startsWith('sk_live_') ? 'live' : 'test';
-  const accountLabel = (process.env.STRIPE_ACCOUNT_LABEL || 'Stripe Secure Checkout').trim();
-
-  return res.json({
-    success: true,
-    configured,
-    publishableConfigured,
-    mode: configured ? mode : 'not_configured',
-    accountLabel,
-    processor: 'Stripe'
-  });
-});
-
-app.post('/billing/create-telegram-subscription-session', requireAuth, billingRateLimit, async (req, res) => {
-  const reqUser = req.user as Express.User | undefined;
-  const userEmail = (reqUser?.email || '').trim().toLowerCase();
-  if (!userEmail) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
-
-  // Existing Telegram bot owners skip the subscription gate.
-  if (!requiresTelegramSubscription(userEmail)) {
-    return res.json({ success: true, subscriptionRequired: false });
-  }
-
-  const botToken = typeof req.body?.botToken === 'string' ? req.body.botToken.trim() : '';
-  const selectedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
-  if (!botToken) {
-    return res.status(400).json({ success: false, message: 'Bot token is required' });
-  }
-  if (!/^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(botToken)) {
-    return res.status(400).json({ success: false, message: 'Invalid Telegram bot token format' });
-  }
-
-  purgeExpiredTelegramDeployIntents();
-
-  // Validate token before charging.
-  const verifyResponse = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-  const verifyData: any = await verifyResponse.json().catch(() => ({}));
-  if (!verifyData?.ok) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid Telegram token',
-      details: verifyData?.description || 'Telegram token validation failed'
-    });
-  }
-  const botUsername = String(verifyData?.result?.username || '').trim();
-  const botName = String(verifyData?.result?.first_name || '').trim();
-  const telegramBotId = String(verifyData?.result?.id || '').trim();
-  const existingOwnerEmail = (telegramBotOwners.get(telegramBotId) || getPersistedTelegramOwner(telegramBotId) || '').trim().toLowerCase();
-  if (existingOwnerEmail && existingOwnerEmail !== userEmail) {
-    return res.status(403).json({
-      success: false,
-      message: 'This Telegram bot token already belongs to another email account.',
-      details: 'Sign in with the original email owner or create a new bot token in @BotFather.'
-    });
-  }
-  if (!botUsername) {
-    return res.status(400).json({
-      success: false,
-      message: 'Telegram bot username missing',
-      details: 'Create bot via @BotFather first, then use its token here.'
-    });
-  }
-
-  const stripeSecretKey = getStripeSecretKey();
-  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
-    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
-  }
-
-  const intentId = randomUUID();
-  pendingTelegramDeployIntents.set(intentId, {
-    intentId,
-    userEmail,
-    botToken,
-    selectedModel,
-    createdAt: Date.now()
-  });
-
-  const frontUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  const successUrl = `${frontUrl}/#/connect/telegram?stage=subscribe&subscribe=success&intentId=${encodeURIComponent(intentId)}&session_id={CHECKOUT_SESSION_ID}`;
-  const cancelUrl = `${frontUrl}/#/connect/telegram?stage=subscribe&subscribe=cancel&intentId=${encodeURIComponent(intentId)}`;
-
-  try {
-    const params = new URLSearchParams();
-    params.set('mode', 'subscription');
-    params.set('success_url', successUrl);
-    params.set('cancel_url', cancelUrl);
-    params.set('customer_email', userEmail);
-    params.set('payment_method_types[0]', 'card');
-    params.set('client_reference_id', reqUser?.id || randomUUID());
-    params.set('metadata[purchase_type]', 'telegram_subscription');
-    params.set('metadata[user_email]', userEmail);
-    params.set('metadata[intent_id]', intentId);
-    if (telegramBotId) {
-      params.set('metadata[telegram_bot_id]', telegramBotId);
-    }
-    params.set('line_items[0][price_data][currency]', 'usd');
-    params.set('line_items[0][price_data][unit_amount]', String(TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS));
-    params.set('line_items[0][price_data][recurring][interval]', TELEGRAM_SUBSCRIPTION_INTERVAL);
-    params.set('line_items[0][price_data][product_data][name]', TELEGRAM_SUBSCRIPTION_LABEL);
-    if (TELEGRAM_SUBSCRIPTION_DESCRIPTION) {
-      params.set('line_items[0][price_data][product_data][description]', TELEGRAM_SUBSCRIPTION_DESCRIPTION);
-    }
-    params.set('line_items[0][quantity]', '1');
-
-    const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeSecretKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': randomUUID()
-      },
-      body: params.toString()
-    });
-    const stripeData: any = await stripeResponse.json().catch(() => ({}));
-    if (!stripeResponse.ok || !stripeData?.url) {
-      pendingTelegramDeployIntents.delete(intentId);
-      return res.status(502).json({ success: false, message: stripeData?.error?.message || 'Unable to create Stripe checkout session.' });
-    }
-
-    return res.json({
-      success: true,
-      subscriptionRequired: true,
-      amountUsd: Math.round(TELEGRAM_SUBSCRIPTION_PRICE_USD_CENTS / 100),
-      checkoutUrl: stripeData.url,
-      intentId,
-      botUsername,
-      botName: botName || null
-    });
-  } catch (error) {
-    pendingTelegramDeployIntents.delete(intentId);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to initialize secure checkout.',
-      details: error instanceof Error ? error.message : String(error || 'Unknown error')
-    });
-  }
-});
-
-app.post('/billing/confirm-telegram-subscription-session', requireAuth, billingRateLimit, async (req, res) => {
-  const reqUser = req.user as Express.User | undefined;
-  const userEmail = (reqUser?.email || '').trim().toLowerCase();
-  if (!userEmail) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
-
-  const sessionId = String(req.body?.sessionId || '').trim();
-  const intentId = String(req.body?.intentId || '').trim();
-  if (!sessionId || !intentId) {
-    return res.status(400).json({ success: false, message: 'sessionId and intentId are required.' });
-  }
-
-  const previous = processedTelegramSubscriptionSessions.get(sessionId);
-  if (previous) {
-    if (previous.userEmail !== userEmail) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-    return res.json({
-      ...(previous.deployPayload || {}),
-      success: true,
-      alreadyProcessed: true,
-      subscribed: true,
-      deployed: Boolean(previous.deployed)
-    });
-  }
-
-  purgeExpiredTelegramDeployIntents();
-  const intent = pendingTelegramDeployIntents.get(intentId);
-  if (!intent) {
-    return res.status(404).json({ success: false, message: 'Deployment intent expired. Please retry from the connect page.' });
-  }
-  if (intent.userEmail !== userEmail) {
-    return res.status(403).json({ success: false, message: 'Access denied' });
-  }
-
-  const stripeSecretKey = getStripeSecretKey();
-  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
-    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
-  }
-
-  try {
-    const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${stripeSecretKey}`
-      }
-    });
-    const data: any = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return res.status(502).json({ success: false, message: data?.error?.message || 'Unable to verify checkout session.' });
-    }
-
-    const metadata = data?.metadata || {};
-    const purchaseType = String(metadata?.purchase_type || '').trim();
-    const metaEmail = String(metadata?.user_email || '').trim().toLowerCase();
-    const metaIntentId = String(metadata?.intent_id || '').trim();
-    const paid = String(data?.payment_status || '').toLowerCase() === 'paid';
-    const status = String(data?.status || '').toLowerCase();
-
-    if (!paid || status !== 'complete' || purchaseType !== 'telegram_subscription' || metaIntentId !== intentId) {
-      return res.status(400).json({ success: false, message: 'Checkout session is not eligible for Telegram subscription.' });
-    }
-    if (metaEmail && metaEmail !== userEmail) {
-      return res.status(403).json({ success: false, message: 'Session email mismatch.' });
-    }
-
-    processedTelegramSubscriptionSessions.set(sessionId, {
-      intentId,
-      userEmail,
-      deployed: false,
-      processedAt: Date.now()
-    });
-
-    // Mark subscription active before deployment so the user can retry deploy without paying again.
-    setUserPlan(userEmail, 'PRO_MONTHLY');
-
-    const deployPayload = await deployTelegramBotForUser({
-      botToken: intent.botToken,
-      requestedBotId: '',
-      selectedModel: intent.selectedModel,
-      userEmail
-    });
-
-    processedTelegramSubscriptionSessions.set(sessionId, {
-      intentId,
-      userEmail,
-      deployed: true,
-      processedAt: Date.now(),
-      deployPayload
-    });
-    pendingTelegramDeployIntents.delete(intentId);
-
-    return res.json({
-      ...deployPayload,
-      subscribed: true
-    });
-  } catch (error: any) {
-    // Keep subscription active even if deployment fails.
-    setUserPlan(userEmail, 'PRO_MONTHLY');
-    pendingTelegramDeployIntents.delete(intentId);
-    const status = typeof error?.status === 'number' ? error.status : 500;
-    const body = error?.body;
-    if (body) {
-      return res.status(status).json({ ...body, subscribed: true });
-    }
-    return res.status(500).json({
-      success: false,
-      subscribed: true,
-      message: 'Failed to confirm subscription or deploy bot.',
-      details: error instanceof Error ? error.message : String(error || 'Unknown error')
-    });
-  }
-});
-
-app.post('/billing/activate-plan', requireAuth, (req, res) => {
-  if (!hasValidAdminKey(req)) {
-    return res.status(403).json({ success: false, message: 'Admin access required' });
-  }
-  const reqUser = req.user as Express.User | undefined;
-  const email = (reqUser?.email || '').trim().toLowerCase();
-  if (!email) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
-  const tierRaw = String(req.body?.tier || 'PRO').trim().toUpperCase();
-  const tier: BillingTier = tierRaw === 'STARTER' ? 'STARTER' : tierRaw === 'ENTERPRISE' ? 'ENTERPRISE' : 'PRO';
-  const plan: PlanType = tier === 'STARTER' ? 'PRO_MONTHLY' : tier === 'PRO' ? 'PRO_YEARLY' : 'CUSTOM';
-  const updated = setUserPlan(email, plan);
-  return res.json({ success: true, plan: updated.plan, tier, isSubscribed: updated.isSubscribed });
-});
-
-app.post('/billing/create-checkout-session', requireAuth, billingRateLimit, async (req, res) => {
-  const plan = String(req.body?.plan || '').trim().toUpperCase();
-  let tier: BillingTier | null = null;
-  if (plan === 'STARTER' || plan === 'PRO' || plan === 'ENTERPRISE') {
-    tier = plan;
-  }
-  if (!tier) {
-    return res.status(400).json({ success: false, message: 'Invalid billing plan selected.' });
-  }
-
-  const providerRaw = String(req.body?.provider || req.body?.paymentProvider || 'stripe').trim().toLowerCase();
-  const provider: 'stripe' | 'razorpay' = providerRaw === 'razorpay' ? 'razorpay' : 'stripe';
-
-  const tierPricing = {
-    STARTER: { usdCents: 2900, inrPaise: 99900 },
-    PRO: { usdCents: 7900, inrPaise: 349900 },
-    ENTERPRISE: { usdCents: 39900, inrPaise: 1299900 }
-  } as const;
-
-  const billingDetails = req.body?.billingDetails ?? {};
-  const fullName = typeof billingDetails.fullName === 'string' ? billingDetails.fullName.trim() : '';
-  const reqUser = req.user as Express.User | undefined;
-  const emailSource = typeof billingDetails.email === 'string' && billingDetails.email.trim()
-    ? billingDetails.email
-    : (reqUser?.email || '');
-  const email = emailSource.trim().toLowerCase();
-  const country = typeof billingDetails.country === 'string' ? billingDetails.country.trim() : '';
-  const city = typeof billingDetails.city === 'string' ? billingDetails.city.trim() : '';
-  const addressLine1 = typeof billingDetails.addressLine1 === 'string' ? billingDetails.addressLine1.trim() : '';
-  const postalCode = typeof billingDetails.postalCode === 'string' ? billingDetails.postalCode.trim() : '';
-
-  const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-
-  if (!email || email.length > 254 || !emailRegex.test(email)) {
-    return res.status(400).json({ success: false, message: 'Please provide a valid billing email.' });
-  }
-  if (fullName.length > 100) {
-    return res.status(400).json({ success: false, message: 'Please provide a valid full name.' });
-  }
-  if (country.length > 80 || city.length > 80) {
-    return res.status(400).json({ success: false, message: 'Please provide valid billing location details.' });
-  }
-  if (addressLine1.length > 140 || postalCode.length > 20) {
-    return res.status(400).json({ success: false, message: 'Please provide a valid billing address.' });
-  }
-
-  const frontUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  const successUrl = `${frontUrl}/#/billing?plan=${tier.toLowerCase()}&checkout=success`;
-  const cancelUrl = `${frontUrl}/#/billing?plan=${tier.toLowerCase()}&checkout=cancel`;
-
-  try {
-    if (provider === 'stripe') {
-      const stripeSecretKey = getStripeSecretKey();
-      if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
-        return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
-      }
-
-      const params = new URLSearchParams();
-      params.set('mode', 'subscription');
-      params.set('success_url', successUrl);
-      params.set('cancel_url', cancelUrl);
-      params.set('customer_email', email);
-      params.set('billing_address_collection', 'required');
-      params.set('payment_method_types[0]', 'card');
-      params.set('client_reference_id', reqUser?.id || randomUUID());
-      params.set('metadata[plan]', tier);
-      params.set('metadata[provider]', 'stripe');
-      params.set('metadata[user_email]', email);
-      params.set('line_items[0][price_data][currency]', 'usd');
-      params.set('line_items[0][price_data][recurring][interval]', 'month');
-      params.set('line_items[0][price_data][unit_amount]', String(tierPricing[tier].usdCents));
-      params.set('line_items[0][price_data][product_data][name]', `SwiftDeploy ${tier} Plan`);
-      params.set('line_items[0][quantity]', '1');
-
-      const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${stripeSecretKey}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Idempotency-Key': randomUUID()
-        },
-        body: params.toString()
-      });
-      const stripeData: any = await stripeResponse.json().catch(() => ({}));
-      if (!stripeResponse.ok || !stripeData?.url) {
-        return res.status(502).json({ success: false, message: stripeData?.error?.message || 'Unable to create Stripe checkout session.' });
-      }
-      return res.json({ success: true, provider: 'stripe', checkoutUrl: stripeData.url, sessionId: stripeData.id });
-    }
-
-    const razorpayKeyId = (process.env.RAZORPAY_KEY_ID || '').trim();
-    const razorpayKeySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
-    if (!razorpayKeyId || !razorpayKeySecret) {
-      return res.status(500).json({ success: false, message: 'Razorpay is not configured on the server.' });
-    }
-
-    const auth = Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
-    const payload = {
-      amount: tierPricing[tier].inrPaise,
-      currency: 'INR',
-      accept_partial: false,
-      description: `SwiftDeploy ${tier} Plan (Monthly)`,
-      customer: {
-        name: fullName || reqUser?.name || 'SwiftDeploy User',
-        email
-      },
-      notify: { sms: false, email: true },
-      reminder_enable: true,
-      callback_url: successUrl,
-      callback_method: 'get',
-      notes: {
-        plan: tier,
-        provider: 'razorpay',
-        country,
-        city
-      }
-    };
-
-    const razorpayResponse = await fetch('https://api.razorpay.com/v1/payment_links', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
-    const razorpayData: any = await razorpayResponse.json().catch(() => ({}));
-    if (!razorpayResponse.ok || !razorpayData?.short_url) {
-      return res.status(502).json({ success: false, message: razorpayData?.error?.description || 'Unable to create Razorpay payment link.' });
-    }
-    return res.json({
-      success: true,
-      provider: 'razorpay',
-      checkoutUrl: razorpayData.short_url,
-      sessionId: razorpayData.id
-    });
-  } catch {
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to initialize secure checkout.'
-    });
-  }
-});
-
-app.post('/billing/create-credit-session', billingRateLimit, async (req, res) => {
-  const reqUser = req.user as Express.User | undefined;
-  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const email = (reqUser?.email || bodyEmail || '').trim().toLowerCase();
-  if (!email && !reqUser) {
-    // Guest checkout is allowed; Stripe will collect email during checkout if omitted.
-  }
-
-  const amountRaw = Number(req.body?.amountUsd);
-  if (!Number.isFinite(amountRaw)) {
-    return res.status(400).json({ success: false, message: 'Please enter a valid amount.' });
-  }
-  const amountUsd = Math.floor(amountRaw);
-  if (amountUsd < 10) {
-    return res.status(400).json({ success: false, message: 'Minimum credit purchase is $10.' });
-  }
-  if (amountUsd > 5000) {
-    return res.status(400).json({ success: false, message: 'Maximum single purchase is $5000.' });
-  }
-  const botId = String(req.body?.botId || '').trim();
-  if (!botId) {
-    return res.status(400).json({ success: false, message: 'botId is required for credit top-up.' });
-  }
-  const hasBot = botTokens.has(botId) || Boolean(getPersistedTelegramOwner(botId));
-  if (!hasBot) {
-    return res.status(404).json({ success: false, message: 'Bot not found for credit top-up.' });
-  }
-
-  const stripeSecretKey = getStripeSecretKey();
-  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
-    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
-  }
-
-  const frontUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  const successUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=success&botId=${encodeURIComponent(botId)}&amount=${amountUsd}&session_id={CHECKOUT_SESSION_ID}`;
-  const cancelUrl = `${frontUrl}/#/connect/telegram?stage=success&credit=cancel&botId=${encodeURIComponent(botId)}`;
-
-  try {
-    const params = new URLSearchParams();
-    params.set('mode', 'payment');
-    params.set('success_url', successUrl);
-    params.set('cancel_url', cancelUrl);
-    if (email) {
-      params.set('customer_email', email);
-    }
-    params.set('payment_method_types[0]', 'card');
-    params.set('client_reference_id', reqUser?.id || randomUUID());
-    params.set('metadata[purchase_type]', 'credit_topup');
-    if (email) {
-      params.set('metadata[user_email]', email);
-    }
-    params.set('metadata[amount_usd]', String(amountUsd));
-    params.set('metadata[bot_id]', botId);
-    params.set('line_items[0][price_data][currency]', 'usd');
-    params.set('line_items[0][price_data][unit_amount]', String(amountUsd * 100));
-    params.set('line_items[0][price_data][product_data][name]', `SwiftDeploy Credit Top-up ($${amountUsd})`);
-    params.set('line_items[0][quantity]', '1');
-
-    const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeSecretKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': randomUUID()
-      },
-      body: params.toString()
-    });
-    const stripeData: any = await stripeResponse.json().catch(() => ({}));
-    if (!stripeResponse.ok || !stripeData?.url) {
-      return res.status(502).json({ success: false, message: stripeData?.error?.message || 'Unable to create Stripe checkout session.' });
-    }
-    return res.json({ success: true, provider: 'stripe', checkoutUrl: stripeData.url, sessionId: stripeData.id });
-  } catch {
-    return res.status(500).json({ success: false, message: 'Failed to initialize secure checkout.' });
-  }
-});
-
-app.post('/billing/confirm-credit-session', async (req, res) => {
-  const reqUser = req.user as Express.User | undefined;
-  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const email = (reqUser?.email || bodyEmail || '').trim().toLowerCase();
-
-  const sessionId = String(req.body?.sessionId || '').trim();
-  const botId = String(req.body?.botId || '').trim();
-  if (!sessionId || !botId) {
-    return res.status(400).json({ success: false, message: 'sessionId and botId are required.' });
-  }
-  if (processedCreditSessions.has(sessionId)) {
-    const credit = applyCreditDecay(botId);
-    return res.json({
-      success: true,
-      botId,
-      remainingUsd: credit.remainingUsd,
-      depleted: credit.depleted,
-      creditLastChargedAt: credit.lastChargedAt,
-      warning: credit.depleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : '',
-      alreadyProcessed: true
-    });
-  }
-
-  const hasBot = botTokens.has(botId) || Boolean(getPersistedTelegramOwner(botId));
-  if (!hasBot) {
-    return res.status(404).json({ success: false, message: 'Bot not found.' });
-  }
-
-  const stripeSecretKey = getStripeSecretKey();
-  if (!stripeSecretKey || !stripeSecretKey.startsWith('sk_')) {
-    return res.status(500).json({ success: false, message: 'Stripe is not configured on the server.' });
-  }
-
-  try {
-    const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${stripeSecretKey}`
-      }
-    });
-    const data: any = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return res.status(502).json({ success: false, message: data?.error?.message || 'Unable to verify checkout session.' });
-    }
-    const metadata = data?.metadata || {};
-    const purchaseType = String(metadata?.purchase_type || '').trim();
-    const metaEmail = String(metadata?.user_email || '').trim().toLowerCase();
-    const metaBotId = String(metadata?.bot_id || '').trim();
-    const amountUsd = Math.max(0, Math.floor(Number(metadata?.amount_usd || 0)));
-    const paid = String(data?.payment_status || '').toLowerCase() === 'paid';
-    if (!paid || purchaseType !== 'credit_topup' || metaBotId !== botId || amountUsd < 10) {
-      return res.status(400).json({ success: false, message: 'Checkout session is not eligible for credit top-up.' });
-    }
-    if (email && metaEmail && metaEmail !== email) {
-      return res.status(403).json({ success: false, message: 'Session email mismatch.' });
-    }
-
-    processedCreditSessions.add(sessionId);
-    const updated = addCreditToBot(botId, amountUsd);
-    persistBotState();
-    return res.json({
-      success: true,
-      botId,
-      creditedUsd: amountUsd,
-      remainingUsd: updated.remainingUsd,
-      depleted: updated.depleted,
-      creditLastChargedAt: updated.lastChargedAt,
-      warning: updated.depleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : ''
-    });
-  } catch {
-    return res.status(500).json({ success: false, message: 'Failed to confirm credit purchase.' });
-  }
-});
-
 // Log required environment variables at startup
 setTimeout(() => {
   const allowVerboseStartupLogs = process.env.NODE_ENV !== 'production'
@@ -5001,7 +4289,6 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://localhost:${PORT}`);
   loadChatMemory();
   loadUserProfiles();
-  loadSubscriptionState();
   restorePersistedBots().catch((error) => {
     console.warn('[BOT_STATE] Restore routine failed:', (error as Error).message);
   });
@@ -5053,5 +4340,3 @@ process.on('SIGINT', () => {
     console.log('Process terminated');
   });
 });
-
-

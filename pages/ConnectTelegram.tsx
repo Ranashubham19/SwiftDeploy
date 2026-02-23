@@ -5,7 +5,7 @@ import { ICONS } from '../constants';
 import { apiUrl } from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
 
-type FlowStep = 'token' | 'send-first-message' | 'pairing' | 'success';
+type FlowStep = 'token' | 'send-first-message' | 'success';
 type DeployStep = 'input' | 'verifying' | 'provisioning' | 'webhooking';
 
 const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ user, bots, setBots }) => {
@@ -16,14 +16,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const stageView = urlParams.get('view') || '';
   const isExistingView = stageView === 'existing';
   const isSuccessStage = stage === 'success';
-  const isSubscribeStage = stage === 'subscribe';
   const stageBotUsername = urlParams.get('bot') || '';
   const stageBotName = urlParams.get('botName') || '';
   const stageBotId = urlParams.get('botId') || '';
-  const stageCreditStatus = urlParams.get('credit') || '';
-  const stageSubscribeStatus = urlParams.get('subscribe') || '';
-  const stageIntentId = urlParams.get('intentId') || '';
-  const stageSessionId = urlParams.get('session_id') || '';
   const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
   const selectedModel = String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH;
 
@@ -32,7 +27,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [deployStep, setDeployStep] = useState<DeployStep>('input');
   const [flowStep, setFlowStep] = useState<FlowStep>(() => {
     if (isSuccessStage) return 'success';
-    if (isSubscribeStage) return 'pairing';
     return 'token';
   });
   const [deployError, setDeployError] = useState('');
@@ -43,17 +37,10 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const [connectedBotLink, setConnectedBotLink] = useState(stageBotLink);
   const [connectedAiProvider, setConnectedAiProvider] = useState('');
   const [connectedAiModel, setConnectedAiModel] = useState('');
-  const [remainingCreditUsd, setRemainingCreditUsd] = useState<number>(10);
-  const [isOutOfCredit, setIsOutOfCredit] = useState(false);
-  const [creditWarning, setCreditWarning] = useState('');
-  const [creditNotice, setCreditNotice] = useState('');
 
   const [videoError, setVideoError] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [showManualPlay, setShowManualPlay] = useState(false);
-  const [creditAmount, setCreditAmount] = useState<string>('10');
-  const [isPurchasingCredit, setIsPurchasingCredit] = useState(false);
-  const [creditError, setCreditError] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -87,9 +74,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setToken('748291035:AAH_f9xS0v5k2m8Lp9qZ-rY7tW4u3i1o');
   };
 
-  // Existing users who already have an active Telegram bot should land on the credits page directly.
+  // Existing users who already have an active Telegram bot should land on the success page directly.
   useEffect(() => {
-    if (isSuccessStage || isSubscribeStage) return;
+    if (isSuccessStage) return;
     const existingBot = bots.find((b) => b.platform === Platform.TELEGRAM);
     if (!existingBot) return;
 
@@ -120,9 +107,9 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     return () => {
       active = false;
     };
-  }, [isSuccessStage, isSubscribeStage, bots, navigate, location.state]);
+  }, [isSuccessStage, bots, navigate, location.state]);
 
-  // Keep UI state in sync when the URL contains a success stage (e.g., redirected from Stripe or deep link).
+  // Keep UI state in sync when the URL contains a success stage.
   useEffect(() => {
     if (!isSuccessStage) return;
     setFlowStep('success');
@@ -155,57 +142,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     };
   }, [isSuccessStage, stageBotId, connectedBotLink]);
 
-  useEffect(() => {
-    if (!isSuccessStage || !stageBotId) return;
-    let active = true;
-    const loadCredit = async () => {
-      try {
-        const response = await fetch(apiUrl(`/bot-credit/${encodeURIComponent(stageBotId)}`), {
-          credentials: 'include'
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!active || !response.ok || !data?.success) return;
-        setRemainingCreditUsd(Number(data.remainingUsd || 0));
-        setIsOutOfCredit(Boolean(data.depleted));
-        setCreditWarning(String(data.warning || ''));
-      } catch {}
-    };
-    loadCredit();
-    const timer = window.setInterval(loadCredit, 15000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [isSuccessStage, stageBotId]);
-
-  useEffect(() => {
-    if (!isSuccessStage || stageCreditStatus !== 'success' || !stageSessionId || !stageBotId) return;
-    let active = true;
-    const confirmCredit = async () => {
-      try {
-        const response = await fetch(apiUrl('/billing/confirm-credit-session'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ sessionId: stageSessionId, botId: stageBotId })
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!active || !response.ok || !data?.success) return;
-        setRemainingCreditUsd(Number(data.remainingUsd || 0));
-        setIsOutOfCredit(Boolean(data.depleted));
-        setCreditWarning(String(data.warning || ''));
-        const credited = Number(data.creditedUsd || 0);
-        if (credited > 0) {
-          setCreditNotice(`Credit recharged successfully: +$${credited}`);
-        }
-      } catch {}
-    };
-    confirmCredit();
-    return () => {
-      active = false;
-    };
-  }, [isSuccessStage, stageCreditStatus, stageSessionId, stageBotId]);
-
   const applyDeployResult = (result: any) => {
     const hadTelegramBot = bots.some((b) => b.platform === Platform.TELEGRAM);
     const botId = String(result.botId || '').trim() || Math.random().toString(36).slice(2, 11);
@@ -236,9 +172,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setConnectedBotLink(telegramLink);
     setConnectedAiProvider(String(result.aiProvider || ''));
     setConnectedAiModel(String(result.aiModel || ''));
-    setRemainingCreditUsd(Number(result.creditRemainingUsd ?? 10));
-    setIsOutOfCredit(Boolean(result.creditDepleted));
-    setCreditWarning(String(result.warning || (result.creditDepleted ? '\u26A0\uFE0F You are out of credit limit. Recharge fast to continue with the AI bot.' : '')));
     setShowConnectedToast(true);
     window.setTimeout(() => setShowConnectedToast(false), 4200);
     setIsDeploying(false);
@@ -258,52 +191,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     setFlowStep('send-first-message');
   };
 
-  useEffect(() => {
-    if (!isSubscribeStage) return;
-    if (stageSubscribeStatus === 'cancel') {
-      setDeployError('Subscription payment cancelled. Please try again.');
-      setIsDeploying(false);
-      setDeployStep('input');
-      setFlowStep('token');
-      navigate('/connect/telegram', { replace: true, state: location.state });
-      return;
-    }
-    if (stageSubscribeStatus !== 'success' || !stageSessionId || !stageIntentId) return;
-    let active = true;
-    setDeployError('');
-    setIsDeploying(true);
-    setDeployStep('verifying');
-    setFlowStep('pairing');
-
-    const confirmSubscription = async () => {
-      try {
-        const response = await fetch(apiUrl('/billing/confirm-telegram-subscription-session'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ sessionId: stageSessionId, intentId: stageIntentId })
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!active) return;
-        if (!response.ok || !data?.success) {
-          throw new Error(data?.message || data?.error || 'Subscription confirmation failed.');
-        }
-        applyDeployResult(data);
-      } catch (error: any) {
-        if (!active) return;
-        setIsDeploying(false);
-        setDeployStep('input');
-        setFlowStep('token');
-        setDeployError(error?.message || 'Unable to confirm subscription.');
-      }
-    };
-
-    confirmSubscription();
-    return () => {
-      active = false;
-    };
-  }, [isSubscribeStage, stageSubscribeStatus, stageSessionId, stageIntentId, navigate, location.state]);
-
   const handleConnect = async () => {
     if (!token) return;
     setDeployError('');
@@ -312,27 +199,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     try {
       setDeployStep('verifying');
       await new Promise((r) => setTimeout(r, 800));
-
-      // New users are redirected to Stripe checkout from this step.
-      const subscriptionResponse = await fetch(apiUrl('/billing/create-telegram-subscription-session'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          botToken: token.trim(),
-          model: selectedModel
-        })
-      });
-      const subscriptionData = await subscriptionResponse.json().catch(() => ({}));
-      if (!subscriptionResponse.ok) {
-        throw new Error(subscriptionData?.message || subscriptionData?.error || 'Unable to start secure checkout.');
-      }
-      if (subscriptionResponse.ok && subscriptionData?.subscriptionRequired && subscriptionData?.checkoutUrl) {
-        setDeployStep('provisioning');
-        await new Promise((r) => setTimeout(r, 700));
-        window.location.href = String(subscriptionData.checkoutUrl);
-        return;
-      }
 
       setDeployStep('provisioning');
       await new Promise((r) => setTimeout(r, 900));
@@ -353,23 +219,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        if (response.status === 402 && result?.subscriptionRequired) {
-          const retryResponse = await fetch(apiUrl('/billing/create-telegram-subscription-session'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              botToken: token.trim(),
-              model: selectedModel
-            })
-          });
-          const retryData = await retryResponse.json().catch(() => ({}));
-          if (retryResponse.ok && retryData?.subscriptionRequired && retryData?.checkoutUrl) {
-            window.location.href = String(retryData.checkoutUrl);
-            return;
-          }
-          throw new Error(retryData?.message || result?.error || 'Subscription required before deployment.');
-        }
         throw new Error(result?.error || result?.message || 'Deployment failed');
       }
 
@@ -408,49 +257,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
     navigate(`/connect/telegram${query}`, { replace: true });
   };
 
-  const handlePurchaseCredit = async () => {
-    if (!(connectedBotId || stageBotId)) {
-      setCreditError('Connect a bot first before purchasing credits.');
-      return;
-    }
-    const numeric = Number(creditAmount);
-    if (!Number.isFinite(numeric) || numeric < 10) {
-      setCreditError('Minimum purchase amount is $10.');
-      return;
-    }
-
-    setCreditError('');
-    setIsPurchasingCredit(true);
-    try {
-      const response = await fetch(apiUrl('/billing/create-credit-session'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ amountUsd: Math.floor(numeric), botId: connectedBotId || stageBotId })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.checkoutUrl) {
-        throw new Error(data?.message || 'Unable to start secure Stripe checkout.');
-      }
-      window.location.href = data.checkoutUrl;
-    } catch (error: any) {
-      setCreditError(error?.message || 'Unable to start secure Stripe checkout.');
-      setIsPurchasingCredit(false);
-    }
-  };
-
-  const increaseCreditAmount = () => {
-    const numeric = Number(creditAmount);
-    const next = Number.isFinite(numeric) ? numeric + 1 : 10;
-    setCreditAmount(String(Math.max(10, Math.floor(next))));
-  };
-
-  const decreaseCreditAmount = () => {
-    const numeric = Number(creditAmount);
-    const next = Number.isFinite(numeric) ? numeric - 1 : 10;
-    setCreditAmount(String(Math.max(10, Math.floor(next))));
-  };
-
   const renderFlowCard = () => {
     if (flowStep === 'send-first-message') {
       return (
@@ -484,25 +290,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
       );
     }
 
-    if (flowStep === 'pairing') {
-      return (
-        <div className="w-full">
-          <div className="relative overflow-hidden bg-gradient-to-br from-[#0b1222]/90 via-[#09182d]/80 to-[#10211a]/70 border border-white/10 rounded-3xl px-6 py-16 md:px-10 text-center shadow-[0_35px_90px_rgba(0,0,0,0.45)]">
-            <div className="absolute -top-16 -left-16 w-40 h-40 bg-cyan-400/10 rounded-full blur-3xl"></div>
-            <div className="absolute -bottom-16 -right-16 w-40 h-40 bg-emerald-400/10 rounded-full blur-3xl"></div>
-            <div className="relative w-12 h-12 mb-8 mx-auto">
-              <div className="absolute inset-0 rounded-full border border-white/15"></div>
-              <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-200/80 border-r-emerald-200/70 animate-spin"></div>
-            </div>
-            <p className="text-3xl md:text-4xl font-medium tracking-[-0.015em] bg-gradient-to-r from-cyan-200 via-sky-200 to-emerald-200 bg-clip-text text-transparent">
-              Pairing Telegram
-            </p>
-            <p className="text-zinc-300 text-base md:text-lg mt-4 font-medium tracking-wide">Connecting your bot. Hang tight...</p>
-          </div>
-        </div>
-      );
-    }
-
     if (flowStep === 'success') {
       return (
         <div className="bg-black/25 border border-white/10 rounded-3xl px-6 py-12 md:px-10 text-center space-y-6">
@@ -512,91 +299,17 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
           <div>
             <h2 className="text-3xl md:text-4xl font-bold tracking-tight bg-gradient-to-r from-cyan-200 via-sky-200 to-emerald-200 bg-clip-text text-transparent">
-              {isExistingView ? 'Live Bot Command Center' : 'Deployment success!'}
+              {isExistingView ? 'Live Bot Status' : 'Deployment success!'}
             </h2>
-            {!isExistingView ? (
-              <p className="text-zinc-400 mt-2 max-w-xl mx-auto">
-                Your token has been connected. Telegram bot identity is managed by BotFather.
-              </p>
-            ) : (
-              <p className="text-zinc-300 mt-2 max-w-xl mx-auto font-medium">
-                Your production bot is already active and running. Credits, recharge, and uptime controls are ready below.
-              </p>
-            )}
+            <p className="text-zinc-300 mt-2 max-w-xl mx-auto font-medium">
+              Your production bot is active. Send a message on Telegram to start using it.
+            </p>
             {connectedBotName || connectedBotUsername ? (
               <p className="text-zinc-200 mt-2">
                 Connected bot: <span className="font-black">{connectedBotName || `@${connectedBotUsername}`}</span>
               </p>
             ) : null}
           </div>
-
-          <div className="pt-2">
-            <p className={`text-5xl md:text-6xl font-bold leading-none ${isOutOfCredit ? 'text-red-400' : 'text-white/95'}`}>${Math.max(0, remainingCreditUsd)}</p>
-            <p className="text-zinc-400 mt-2 font-medium uppercase tracking-[0.12em] text-[11px]">Remaining credits</p>
-            {isOutOfCredit ? (
-              <p className="mt-3 text-red-400 font-black text-sm uppercase tracking-wide">
-                {'\u26A0\uFE0F'} You are out of credit limit. Recharge fast.
-              </p>
-            ) : null}
-            {!isOutOfCredit && creditWarning ? (
-              <p className="mt-3 text-amber-300 font-bold text-xs">{creditWarning}</p>
-            ) : null}
-          </div>
-
-          <div className="text-sm text-zinc-500 font-semibold">
-            ${Math.max(0, 10 - remainingCreditUsd)} used
-            <span className="mx-2">|</span>
-            Secure checkout active
-            <span className="mx-2">|</span>
-            $10 initial credit
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 max-w-[460px] mx-auto">
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 font-black pointer-events-none">$</span>
-              <input
-                type="number"
-                min={10}
-                step={1}
-                value={creditAmount}
-                onChange={(e) => setCreditAmount(e.target.value)}
-                placeholder="Minimum amount: $10"
-                className="dark-number-input w-full bg-[#141416] border border-white/10 rounded-xl pl-8 pr-14 py-3 text-zinc-200 font-semibold placeholder:text-zinc-500/90 placeholder:italic placeholder:font-medium placeholder:tracking-[0.01em] focus:outline-none focus:border-cyan-400/40"
-              />
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-0">
-                <button
-                  type="button"
-                  onClick={increaseCreditAmount}
-                  className="w-6 h-4 text-zinc-300 text-[10px] leading-none hover:text-white"
-                >
-                  {'\u25B2'}
-                </button>
-                <button
-                  type="button"
-                  onClick={decreaseCreditAmount}
-                  className="w-6 h-4 text-zinc-300 text-[10px] leading-none hover:text-white"
-                >
-                  {'\u25BC'}
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handlePurchaseCredit}
-              disabled={isPurchasingCredit}
-              className="bg-zinc-100 text-black hover:bg-white rounded-xl px-5 py-3 font-black uppercase text-xs tracking-wider transition-colors"
-            >
-              {isPurchasingCredit ? 'Opening checkout...' : 'Purchase credit ->'}
-            </button>
-          </div>
-          {creditError ? (
-            <p className="text-xs text-red-300">{creditError}</p>
-          ) : null}
-          {creditNotice ? (
-            <p className="text-xs text-emerald-300 font-semibold">{creditNotice}</p>
-          ) : null}
-
-          <p className="text-xs text-zinc-500">One time purchase. 10% is charged as processing fees.</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-[460px] mx-auto pt-1">
             <a
@@ -615,9 +328,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
             </button>
           </div>
 
-          <p className="text-xs text-zinc-500 pt-1">
-            For advanced scaling, dedicated performance tuning, or enterprise onboarding, contact support.
-          </p>
+          <p className="text-xs text-zinc-500 pt-1">Need help? Use Contact Support from the top menu.</p>
         </div>
       );
     }
@@ -685,17 +396,6 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 
   return (
     <div className="min-h-screen bg-[#050a16] flex flex-col items-center justify-center p-6 relative font-sans">
-      <style>{`
-        .dark-number-input::-webkit-outer-spin-button,
-        .dark-number-input::-webkit-inner-spin-button {
-          -webkit-appearance: none;
-          margin: 0;
-        }
-        .dark-number-input[type=number] {
-          -moz-appearance: textfield;
-          appearance: textfield;
-        }
-      `}</style>
       <div className="stars opacity-50"></div>
 
       <div className="absolute top-12 left-16 hidden md:block">
@@ -828,6 +528,3 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
 };
 
 export default ConnectTelegram;
-
-
-

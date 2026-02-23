@@ -25,8 +25,6 @@ type User = {
   email: string;
   name: string;
   passwordHash: string;
-  plan: 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
-  isSubscribed: boolean;
 };
 const registeredUsers = new Map<string, User>(); // Store registered users with their password hashes
 const pendingSignups = new Map<string, { id: string; email: string; name: string; passwordHash: string; createdAt: Date }>();
@@ -128,9 +126,7 @@ export const markEmailAsRegistered = (email: string, name: string, passwordHash:
     id: crypto.randomUUID(),
     email: normalizedEmail,
     name,
-    passwordHash,
-    plan: 'FREE',
-    isSubscribed: false
+    passwordHash
   };
   registeredUsers.set(normalizedEmail, user);
   pendingSignups.delete(normalizedEmail);

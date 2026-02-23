@@ -23,8 +23,6 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  plan: 'FREE' | 'PRO_MONTHLY' | 'PRO_YEARLY' | 'CUSTOM';
-  isSubscribed: boolean;
 }
 
 export interface Bot {

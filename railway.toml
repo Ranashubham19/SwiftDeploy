@@ -5,27 +5,36 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [variables]
-TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @BotFather" }
-OPENROUTER_API_KEY = { required = true, description = "OpenRouter API key" }
+  TELEGRAM_BOT_TOKEN = { required = true, description = "Telegram Bot Token from @BotFather" }
+  OPENROUTER_API_KEY = { required = true, description = "OpenRouter API key" }
 DATABASE_URL = { required = true, description = "PostgreSQL connection string" }
 APP_URL = { required = false, description = "Public Railway URL used for Telegram webhook" }
-OPENROUTER_BASE_URL = { required = false, description = "OpenRouter base URL (default: https://openrouter.ai/api/v1)" }
-DEFAULT_MODEL = { required = false, description = "Default model key/id (default: openrouter/auto)" }
+  OPENROUTER_BASE_URL = { required = false, description = "OpenRouter base URL (default: https://openrouter.ai/api/v1)" }
+  OPENROUTER_TIMEOUT_MS = { required = false, description = "OpenRouter per-request timeout in ms" }
+  OPENROUTER_MAX_RETRIES = { required = false, description = "OpenRouter retry count for 429/5xx" }
+  OPENROUTER_RETRY_BASE_DELAY_MS = { required = false, description = "Base backoff delay in ms for OpenRouter retries" }
+  DEFAULT_MODEL = { required = false, description = "Default model key/id (default: openrouter/auto)" }
 FALLBACK_MODEL = { required = false, description = "Fallback model id" }
 MAX_INPUT_CHARS = { required = false, description = "Max Telegram input chars per message" }
 MAX_OUTPUT_TOKENS = { required = false, description = "Max OpenRouter output tokens" }
-STREAM_EDIT_INTERVAL_MS = { required = false, description = "Streaming edit throttle interval for Telegram message edits (lower = faster visible typing)" }
-MAX_CONTINUATION_ROUNDS = { required = false, description = "Auto-continuation rounds when response is cut by token limit" }
-MODEL_FAST_ID = { required = false, description = "Override fast model id" }
+  STREAM_EDIT_INTERVAL_MS = { required = false, description = "Streaming edit throttle interval for Telegram message edits (lower = faster visible typing)" }
+  STREAM_PREVIEW_MAX_CHARS = { required = false, description = "Max preview characters during streaming edits to keep long responses fast" }
+  MAX_CONTINUATION_ROUNDS = { required = false, description = "Auto-continuation rounds when response is cut by token limit" }
+  FAST_RECENT_CONTEXT_MESSAGES = { required = false, description = "Reduced recent context size for short prompts to improve latency" }
+  MAX_MODEL_ATTEMPTS = { required = false, description = "Max fallback model attempts per request" }
+  MAX_TOOL_ROUNDS = { required = false, description = "Max tool-call planning rounds before final answer" }
+  MODEL_FAST_ID = { required = false, description = "Override fast model id" }
 MODEL_SMART_ID = { required = false, description = "Override smart model id" }
 MODEL_CODE_ID = { required = false, description = "Override code model id" }
 MODEL_CODE_FAST_ID = { required = false, description = "Optional fast model for direct code generation prompts" }
 MODEL_MATH_ID = { required = false, description = "Override math model id" }
 MODEL_VISION_ID = { required = false, description = "Override vision model id" }
 SUMMARY_MODEL = { required = false, description = "Model id used for running summary updates" }
-TYPEWRITER_FALLBACK_ENABLED = { required = false, description = "Enable typewriter fallback when provider does not stream deltas" }
-TYPEWRITER_CHARS_PER_TICK = { required = false, description = "Typewriter speed: chars revealed per tick" }
-TYPEWRITER_TICK_MS = { required = false, description = "Typewriter speed: delay in milliseconds between ticks" }
+  TYPEWRITER_FALLBACK_ENABLED = { required = false, description = "Enable typewriter fallback when provider does not stream deltas" }
+  TYPEWRITER_CHARS_PER_TICK = { required = false, description = "Typewriter speed: chars revealed per tick" }
+  TYPEWRITER_TICK_MS = { required = false, description = "Typewriter speed: delay in milliseconds between ticks" }
+  SIMULATED_STREAM_CHUNK_SIZE = { required = false, description = "Fallback simulated streaming chunk size" }
+  SIMULATED_STREAM_DELAY_MS = { required = false, description = "Fallback simulated streaming delay in ms" }
 TG_STICKER_REPLY_IDS = { required = false, description = "Comma-separated Telegram sticker file IDs for auto-reply stickers" }
 TG_STICKER_REPLY_PROBABILITY = { required = false, description = "Reply sticker probability between 0 and 1" }
 CODE_FILE_EXPORT_ENABLED = { required = false, description = "Attach generated code as downloadable editor-like file" }
