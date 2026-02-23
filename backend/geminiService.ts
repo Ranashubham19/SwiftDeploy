@@ -24,7 +24,6 @@ const MODEL_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.25');
 const MODEL_TOP_P = 0.8;
 const MODEL_MAX_TOKENS = Math.max(1200, parseInt(process.env.AI_MAX_TOKENS || (FAST_REPLY_MODE ? '1200' : '1800'), 10));
 const HISTORY_TOKEN_BUDGET = parseInt(process.env.HISTORY_TOKEN_BUDGET || '6000', 10);
-const CHATGPT_52_MODE = (process.env.CHATGPT_52_MODE || 'true').trim().toLowerCase() !== 'false';
 const OPENROUTER_MAX_MODEL_ATTEMPTS = Math.max(1, parseInt(process.env.OPENROUTER_MAX_MODEL_ATTEMPTS || (FAST_REPLY_MODE ? '2' : '4'), 10) || 2);
 
 const REALTIME_KEYWORDS = ["2024", "2025", "2026", "today", "now", "current", "latest", "right now"];
@@ -315,38 +314,28 @@ const buildWebGrounding = async (prompt: string): Promise<string> => {
 const getProviderOrder = (preferredProvider: string, prompt: string): string[] => {
   const temporal = isTemporalQuery(prompt);
   const reasoningHeavy = isReasoningHeavyQuery(prompt);
-  if (CHATGPT_52_MODE) {
-    if (preferredProvider === 'openai') return ['openai', 'anthropic', 'openrouter', 'moonshot', 'sarvam', 'gemini'];
-    if (preferredProvider === 'anthropic') return ['openai', 'anthropic', 'openrouter', 'moonshot', 'sarvam', 'gemini'];
-    if (preferredProvider === 'openrouter') return ['openai', 'openrouter', 'anthropic', 'moonshot', 'sarvam', 'gemini'];
-    if (preferredProvider === 'moonshot') return ['openai', 'moonshot', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
-    if (preferredProvider === 'sarvam') return ['openai', 'sarvam', 'anthropic', 'openrouter', 'moonshot', 'gemini'];
-    return ['openai', 'anthropic', 'openrouter', 'moonshot', 'sarvam', 'gemini'];
-  }
+  const preferred = preferredProvider === 'openai' ? 'openrouter' : preferredProvider;
   if (FAST_REPLY_MODE) {
-    if (preferredProvider === 'gemini') return ['gemini', 'openai', 'openrouter', 'anthropic', 'moonshot', 'sarvam'];
-    if (preferredProvider === 'openai') return ['openai', 'gemini', 'openrouter', 'anthropic', 'moonshot', 'sarvam'];
-    if (preferredProvider === 'openrouter') return ['openrouter', 'gemini', 'openai', 'anthropic', 'moonshot', 'sarvam'];
-    if (preferredProvider === 'anthropic') return ['anthropic', 'gemini', 'openai', 'openrouter', 'moonshot', 'sarvam'];
-    if (preferredProvider === 'moonshot') return ['moonshot', 'gemini', 'openai', 'openrouter', 'anthropic', 'sarvam'];
-    if (preferredProvider === 'sarvam') return ['sarvam', 'gemini', 'openai', 'openrouter', 'anthropic', 'moonshot'];
+    if (preferred === 'gemini') return ['gemini', 'openrouter', 'anthropic', 'moonshot', 'sarvam'];
+    if (preferred === 'openrouter') return ['openrouter', 'gemini', 'anthropic', 'moonshot', 'sarvam'];
+    if (preferred === 'anthropic') return ['anthropic', 'openrouter', 'gemini', 'moonshot', 'sarvam'];
+    if (preferred === 'moonshot') return ['moonshot', 'openrouter', 'gemini', 'anthropic', 'sarvam'];
+    if (preferred === 'sarvam') return ['sarvam', 'openrouter', 'gemini', 'anthropic', 'moonshot'];
   }
 
   if (temporal || reasoningHeavy) {
-    if (preferredProvider === 'moonshot') return ['moonshot', 'openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
-    if (preferredProvider === 'openai') return ['openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
-    if (preferredProvider === 'anthropic') return ['anthropic', 'openai', 'openrouter', 'sarvam', 'gemini'];
-    if (preferredProvider === 'gemini') return ['gemini', 'openai', 'anthropic', 'openrouter', 'sarvam'];
-    if (preferredProvider === 'sarvam') return ['openai', 'anthropic', 'openrouter', 'sarvam', 'gemini'];
-    return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
+    if (preferred === 'moonshot') return ['moonshot', 'openrouter', 'anthropic', 'sarvam', 'gemini'];
+    if (preferred === 'anthropic') return ['anthropic', 'openrouter', 'sarvam', 'gemini', 'moonshot'];
+    if (preferred === 'gemini') return ['gemini', 'openrouter', 'anthropic', 'sarvam', 'moonshot'];
+    if (preferred === 'sarvam') return ['sarvam', 'openrouter', 'anthropic', 'gemini', 'moonshot'];
+    return ['openrouter', 'moonshot', 'anthropic', 'sarvam', 'gemini'];
   }
 
-  if (preferredProvider === 'moonshot') return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
-  if (preferredProvider === 'sarvam') return ['sarvam', 'openrouter', 'openai', 'anthropic', 'gemini'];
-  if (preferredProvider === 'anthropic') return ['anthropic', 'openrouter', 'openai', 'sarvam', 'gemini'];
-  if (preferredProvider === 'gemini') return ['gemini', 'openrouter', 'openai', 'anthropic', 'sarvam'];
-  if (preferredProvider === 'openai') return ['openai', 'openrouter', 'anthropic', 'sarvam', 'gemini'];
-  return ['moonshot', 'openrouter', 'openai', 'anthropic', 'sarvam', 'gemini'];
+  if (preferred === 'moonshot') return ['moonshot', 'openrouter', 'anthropic', 'sarvam', 'gemini'];
+  if (preferred === 'sarvam') return ['sarvam', 'openrouter', 'anthropic', 'gemini', 'moonshot'];
+  if (preferred === 'anthropic') return ['anthropic', 'openrouter', 'sarvam', 'gemini', 'moonshot'];
+  if (preferred === 'gemini') return ['gemini', 'openrouter', 'anthropic', 'sarvam', 'moonshot'];
+  return ['openrouter', 'moonshot', 'anthropic', 'sarvam', 'gemini'];
 };
 
 const getOpenRouterPoolFromEnv = (): string[] => {
@@ -378,7 +367,11 @@ const getOpenRouterIntentModels = (intent: IntentType): string[] => {
 
 const getOpenRouterCandidateModels = (prompt: string): string[] => {
   const intent = detectIntent(prompt);
-  const baseModel = (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim();
+  const baseModel = (
+    process.env.DEFAULT_MODEL ||
+    process.env.OPENROUTER_MODEL ||
+    'openrouter/free'
+  ).trim();
   const intentModels = getOpenRouterIntentModels(intent);
   const poolModels = getOpenRouterPoolFromEnv();
   return Array.from(new Set([baseModel, ...intentModels, ...poolModels].filter(Boolean)));
@@ -685,16 +678,15 @@ export const generateBotResponse = async (
 
     const hasSarvam = getSarvamKeys().length > 0;
     const hasMoonshot = Boolean((process.env.MOONSHOT_API_KEY || '').trim());
-    const hasOpenAI = Boolean((process.env.OPENAI_API_KEY || '').trim());
     const hasOpenRouter = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
-    const explicitProvider = (runtimeConfig?.provider || process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const explicitProviderRaw = (runtimeConfig?.provider || process.env.AI_PROVIDER || '').trim().toLowerCase();
+    const explicitProvider = explicitProviderRaw === 'openai' ? 'openrouter' : explicitProviderRaw;
     const runtimeModel = (runtimeConfig?.model || '').trim();
     const forceProvider = runtimeConfig?.forceProvider === true;
-    const preferOpenAI = CHATGPT_52_MODE && hasOpenAI;
     const preferredProvider =
       explicitProvider
-      || (preferOpenAI ? 'openai' : hasMoonshot ? 'moonshot' : hasOpenAI ? 'openai' : hasSarvam ? 'sarvam' : hasOpenRouter ? 'openrouter' : 'gemini');
-    const providers = forceProvider ? [preferredProvider || 'gemini'] : getProviderOrder(preferredProvider, sanitizedPrompt);
+      || (hasOpenRouter ? 'openrouter' : hasMoonshot ? 'moonshot' : hasSarvam ? 'sarvam' : 'gemini');
+    const providers = forceProvider ? [preferredProvider || 'openrouter'] : getProviderOrder(preferredProvider, sanitizedPrompt);
 
     let lastError: Error | null = null;
     for (const provider of providers) {

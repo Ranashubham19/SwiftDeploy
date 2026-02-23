@@ -511,7 +511,8 @@ const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim();
 const hasProviderKey = (provider: string): boolean => {
   const p = String(provider || '').trim().toLowerCase();
   if (!p) return false;
-  if (p === 'openai') return Boolean(String(process.env.OPENAI_API_KEY || '').trim());
+  // Legacy runtime is now OpenRouter-first; OpenAI mode is intentionally disabled.
+  if (p === 'openai') return false;
   if (p === 'openrouter') return Boolean(String(process.env.OPENROUTER_API_KEY || '').trim());
   if (p === 'moonshot') return Boolean(String(process.env.MOONSHOT_API_KEY || '').trim());
   if (p === 'anthropic') return Boolean(String(process.env.ANTHROPIC_API_KEY || '').trim());
@@ -521,9 +522,10 @@ const hasProviderKey = (provider: string): boolean => {
 };
 
 const resolveUsableProvider = (preferredProvider?: string): string | undefined => {
-  const preferred = String(preferredProvider || '').trim().toLowerCase();
+  const preferredRaw = String(preferredProvider || '').trim().toLowerCase();
+  const preferred = preferredRaw === 'openai' ? 'openrouter' : preferredRaw;
   if (preferred && hasProviderKey(preferred)) return preferred;
-  const fallbackOrder = ['openai', 'openrouter', 'moonshot', 'anthropic', 'sarvam', 'gemini'];
+  const fallbackOrder = ['openrouter', 'anthropic', 'moonshot', 'sarvam', 'gemini'];
   return fallbackOrder.find((candidate) => hasProviderKey(candidate));
 };
 
@@ -674,29 +676,39 @@ const verifyTelegramWebhookRequest = (req: express.Request, botId: string): bool
 };
 
 const getActiveAiConfig = (): { provider: string; model: string } => {
-  const provider = (process.env.AI_PROVIDER || 'moonshot').trim().toLowerCase();
+  const preferredRaw = (process.env.AI_PROVIDER || 'openrouter').trim().toLowerCase();
+  const provider = preferredRaw === 'openai' ? 'openrouter' : preferredRaw;
   const hasOpenRouterPool = Boolean((process.env.OPENROUTER_MODELS || '').trim());
+  const openRouterDefaultModel = (
+    process.env.DEFAULT_MODEL ||
+    process.env.OPENROUTER_MODEL ||
+    'openrouter/free'
+  ).trim();
   const model =
     provider === 'moonshot'
       ? (process.env.MOONSHOT_MODEL || 'moonshotai/kimi-k2.5').trim()
-      : provider === 'openai'
-        ? (process.env.OPENAI_MODEL || 'gpt-5.2').trim()
-        : provider === 'anthropic'
+      : provider === 'anthropic'
           ? (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim()
           : provider === 'openrouter'
-            ? (hasOpenRouterPool ? 'auto-router (intent-based)' : (process.env.OPENROUTER_MODEL || 'moonshotai/kimi-k2').trim())
+            ? (hasOpenRouterPool ? 'auto-router (intent-based)' : openRouterDefaultModel)
             : provider === 'sarvam'
               ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
               : (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
   return { provider, model };
 };
 
-const TELEGRAM_DEFAULT_MODEL_SELECTION = (process.env.TELEGRAM_DEFAULT_MODEL_SELECTION || 'gpt-5-2').trim().toLowerCase();
+const TELEGRAM_DEFAULT_MODEL_SELECTION = (process.env.TELEGRAM_DEFAULT_MODEL_SELECTION || '').trim().toLowerCase();
 
 const mapTelegramModelChoice = (choiceRaw: string): { provider: string; model: string } | null => {
   const choice = String(choiceRaw || '').trim().toLowerCase();
-  if (choice === 'gpt-5-2' || choice === 'gpt-5.2') {
-    return { provider: 'openai', model: 'gpt-5.2' };
+  if (
+    choice === 'auto' ||
+    choice === 'openrouter' ||
+    choice === 'openrouter-auto' ||
+    choice === 'openrouter/auto' ||
+    choice === 'openrouter/free'
+  ) {
+    return getActiveAiConfig();
   }
   if (choice === 'claude-opus-4-5' || choice === 'claude-4.5' || choice === 'claude_opus_4_5') {
     return { provider: 'anthropic', model: 'claude-opus-4-5' };
@@ -717,7 +729,7 @@ const resolveTelegramAiConfig = (selectedModelRaw: string): { provider: string; 
   if (fromSelection) return fromSelection;
   const fromDefault = mapTelegramModelChoice(TELEGRAM_DEFAULT_MODEL_SELECTION);
   if (fromDefault) return fromDefault;
-  return { provider: 'openai', model: 'gpt-5.2' };
+  return getActiveAiConfig();
 };
 
 // Middleware configuration
@@ -2843,7 +2855,15 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
     await sendTelegramReply(
       bot,
       chatId,
-      'Welcome. Send your question and I will provide a direct answer.',
+      [
+        'Welcome. I am your ChatGPT-style Telegram assistant.',
+        '',
+        'Quick tips:',
+        '- Ask coding, math, writing, planning, and research-style questions.',
+        '- Use /help to view all commands.',
+        '- Use /reset to clear this conversation memory.',
+        '- Use /emoji and /stickers to personalize replies.'
+      ].join('\n'),
       msg.message_id
     );
     return;
@@ -2941,7 +2961,15 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   }
 
   if (incomingCommand === 'start') {
-    const welcome = `AI Provider: ${selectedProvider}\nAI Model: ${selectedModel}\n\nSend a message to start chatting with AI.`;
+    const welcome = [
+      'Welcome. I am your ChatGPT-style Telegram assistant.',
+      '',
+      'Quick tips:',
+      '- Ask coding, math, writing, planning, and research-style questions.',
+      '- Use /help to view all commands.',
+      '- Use /reset to clear this conversation memory.',
+      '- Use /emoji and /stickers to personalize replies.'
+    ].join('\n');
     await botInstance.sendMessage(chatId, welcome);
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
