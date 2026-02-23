@@ -41,6 +41,23 @@ const removeMarkdownArtifacts = (input: string): string => {
   return output;
 };
 
+const removeDecorativeSpecialChars = (input: string): string =>
+  input
+    .replace(/[`|~^]+/g, "")
+    .replace(/[#@]+/g, "")
+    .replace(/[<>{}]/g, "")
+    .replace(/[^\w\s.,:;!?()[\]+\-*/=%'"/]/g, "")
+    .replace(/[ ]{2,}/g, " ");
+
+const normalizeOperatorSpacing = (input: string): string =>
+  input
+    // Keep operator presentation clean for numeric/algebraic expressions.
+    .replace(/(\d|\)|\])\s*([+\-*/=])\s*(\d|\(|\[|[A-Za-z_])/g, "$1 $2 $3")
+    .replace(/([A-Za-z_])\s*([+\-*/=])\s*(\d|\(|\[)/g, "$1 $2 $3")
+    .replace(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*|\d)/g, "$1 = $2")
+    // Normalize compact operator lists like +-*/.
+    .replace(/\+\s*-\s*\*\s*\/+/g, "+, -, *, /");
+
 const renumberLists = (lines: string[]): string[] => {
   const out: string[] = [];
   let listIndex = 0;
@@ -134,12 +151,26 @@ const addParagraphSpacing = (lines: string[]): string[] => {
   return out;
 };
 
+const spreadNumberedItems = (lines: string[]): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const next = i + 1 < lines.length ? lines[i + 1] : "";
+    out.push(line);
+    if (numberedPattern.test(line) && next && next.trim() !== "" && numberedPattern.test(next)) {
+      out.push("");
+    }
+  }
+  return out;
+};
+
 export const formatProfessionalReply = (input: string): string => {
   const stripped = removeMarkdownArtifacts(input || "");
   const ascii = normalizeAscii(stripped);
+  const cleaned = removeDecorativeSpecialChars(normalizeOperatorSpacing(ascii));
 
-  const lines = ascii.split("\n");
-  const normalizedLines = addParagraphSpacing(renumberLists(lines))
+  const lines = cleaned.split("\n");
+  const normalizedLines = spreadNumberedItems(addParagraphSpacing(renumberLists(lines)))
     .map((line) => line.replace(/\s{2,}/g, " ").trimEnd())
     .filter((line, index, arr) => {
       if (line !== "") return true;
