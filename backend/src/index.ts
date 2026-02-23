@@ -160,6 +160,14 @@ const bot = buildBot({
   maxOutputTokens: MAX_OUTPUT_TOKENS,
 });
 
+bot.use(async (ctx, next) => {
+  telegramUpdatesSeen += 1;
+  lastTelegramUpdateAt = new Date().toISOString();
+  lastTelegramUpdateType = ctx.updateType ?? "unknown";
+  lastTelegramChatId = ctx.chat?.id ? String(ctx.chat.id) : null;
+  await next();
+});
+
 const app = express();
 if (IS_PRODUCTION) {
   app.set("trust proxy", 1);
@@ -171,6 +179,12 @@ let telegramRuntimeMode: "webhook" | "polling" | "unknown" = "unknown";
 let lastTelegramStartupError: string | null = null;
 let pollingLaunchPromise: Promise<void> | null = null;
 let shutdownRequested = false;
+let telegramBotUsername: string | null = null;
+let telegramBotId: number | null = null;
+let telegramUpdatesSeen = 0;
+let lastTelegramUpdateAt: string | null = null;
+let lastTelegramUpdateType: string | null = null;
+let lastTelegramChatId: string | null = null;
 const allowedOrigins = new Set(
   [
     FRONTEND_URL,
@@ -214,8 +228,14 @@ app.get("/health", (_req, res) => {
     hasGoogleConfig: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     telegramRuntimeReady,
     telegramRuntimeMode,
+    telegramBotUsername,
+    telegramBotId,
     startupAttempts,
     lastTelegramStartupError,
+    telegramUpdatesSeen,
+    lastTelegramUpdateAt,
+    lastTelegramUpdateType,
+    lastTelegramChatId,
   });
 });
 
@@ -516,6 +536,8 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       telegramRuntimeReady = true;
       startupAttempts = 0;
       lastTelegramStartupError = null;
+      telegramBotUsername = me.username ?? null;
+      telegramBotId = me.id ?? null;
       logger.info(
         { username: me.username, id: me.id },
         "Telegram runtime ready",
