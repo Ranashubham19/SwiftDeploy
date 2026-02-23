@@ -33,7 +33,7 @@ CODE_FAST_PATH_ENABLED = { required = false, description = "Enable faster model/
 LOG_LEVEL = { required = false, description = "pino log level (info/debug/warn/error)" }
 
 [deploy]
-startCommand = "npm --prefix backend run start:railway"
+startCommand = "npm --prefix backend run start:legacy"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 numReplicas = 1
