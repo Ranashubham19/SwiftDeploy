@@ -139,6 +139,8 @@ if (IS_PRODUCTION) {
 let telegramRuntimeReady = false;
 let startupAttempts = 0;
 let startupRetryTimer: NodeJS.Timeout | null = null;
+let telegramRuntimeMode: "webhook" | "polling" | "unknown" = "unknown";
+let lastTelegramStartupError: string | null = null;
 const allowedOrigins = new Set(
   [
     FRONTEND_URL,
@@ -181,6 +183,9 @@ app.get("/health", (_req, res) => {
     mode: "bot-runtime-with-auth-fallback",
     hasGoogleConfig: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     telegramRuntimeReady,
+    telegramRuntimeMode,
+    startupAttempts,
+    lastTelegramStartupError,
   });
 });
 
@@ -383,6 +388,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       .deleteWebhook({ drop_pending_updates: false })
       .catch(() => {});
     await bot.launch({ dropPendingUpdates: false });
+    telegramRuntimeMode = "polling";
     logger.info({ reason }, "Long-polling mode enabled");
   };
 
@@ -419,6 +425,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
               drop_pending_updates: false,
             });
             const webhookInfo = await bot.telegram.getWebhookInfo();
+            telegramRuntimeMode = "webhook";
             logger.info({ webhookUrl, webhookInfo }, "Webhook mode enabled");
           } catch (error) {
             logger.error(
@@ -438,12 +445,16 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       const me = await bot.telegram.getMe();
       telegramRuntimeReady = true;
       startupAttempts = 0;
+      lastTelegramStartupError = null;
       logger.info(
         { username: me.username, id: me.id },
         "Telegram runtime ready",
       );
     } catch (error) {
       telegramRuntimeReady = false;
+      const message =
+        error instanceof Error ? error.message : String(error);
+      lastTelegramStartupError = message.slice(0, 800);
       logger.error(
         {
           startupAttempts,
