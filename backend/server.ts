@@ -10,7 +10,7 @@ import passport from 'passport';
 import session from 'express-session';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { sendVerificationEmail, sendTestEmail, validateVerificationCode, getPendingVerifications, isEmailRegistered, markEmailAsRegistered, getUserByEmail, updateUserPassword, storePendingSignup, getPendingSignup, clearPendingSignup } from './emailService.js';
-import { generateBotResponse, estimateTokens, needsRealtimeSearch, type AIRuntimeConfig } from './geminiService.js';
+import { generateBotResponse, estimateTokens, needsRealtimeSearch, type AIRuntimeConfig } from './aiService.js';
 import { Request } from 'express';
 import bcrypt from 'bcrypt';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -421,9 +421,24 @@ const loadPersistedBotState = (): PersistedBotState => {
 
     const raw = fs.readFileSync(BOT_STATE_FILE, 'utf8');
     const parsed = JSON.parse(raw) as PersistedBotState;
+    const fallbackOpenRouterModel = (process.env.DEFAULT_MODEL || process.env.OPENROUTER_MODEL || 'openrouter/free').trim();
+    const telegramBotsRaw = Array.isArray(parsed.telegramBots) ? parsed.telegramBots : [];
+    const telegramBots = telegramBotsRaw
+      .filter((item) => {
+        if (!SINGLE_TELEGRAM_TOKEN_ONLY || !PRIMARY_TELEGRAM_TOKEN) return true;
+        return String(item?.botToken || '').trim() === PRIMARY_TELEGRAM_TOKEN;
+      })
+      .map((item) => {
+        const aiModel = String(item?.aiModel || '').trim() || fallbackOpenRouterModel;
+        return {
+          ...item,
+          aiProvider: 'openrouter',
+          aiModel
+        };
+      });
     return {
       version: 1,
-      telegramBots: Array.isArray(parsed.telegramBots) ? parsed.telegramBots : [],
+      telegramBots,
       discordBots: Array.isArray(parsed.discordBots) ? parsed.discordBots : []
     };
   } catch (error) {
@@ -455,8 +470,16 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'placeholder_cl
 const SESSION_SECRET = process.env.SESSION_SECRET || 'very_long_random_session_secret_for_dev_testing_only';
 const isProduction = process.env.NODE_ENV === 'production';
 const defaultPortFromEnv = (process.env.PORT || '4000').trim() || '4000';
-const derivedBaseUrl = (process.env.BASE_URL || '').trim()
-  || (isProduction && process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : `http://localhost:${defaultPortFromEnv}`);
+const appUrlFromEnv = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+const baseUrlFromEnv = (process.env.BASE_URL || '').trim().replace(/\/+$/, '');
+const railwayDomain =
+  (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '');
+const derivedBaseUrl = appUrlFromEnv
+  || baseUrlFromEnv
+  || (isProduction && railwayDomain ? `https://${railwayDomain}` : `http://localhost:${defaultPortFromEnv}`);
 const BOT_STATE_FILE = (process.env.BOT_STATE_FILE || '').trim()
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'swiftdeploy-bots.json')
@@ -491,6 +514,9 @@ app.get('/', (_req, res) => {
 
 const PORT = parseInt(process.env.PORT || "4000", 10);
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const PRIMARY_TELEGRAM_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+const SINGLE_TELEGRAM_TOKEN_ONLY = (process.env.SINGLE_TELEGRAM_TOKEN_ONLY || 'true').trim().toLowerCase() !== 'false';
+const DEFAULT_OPENROUTER_MODEL = (process.env.DEFAULT_MODEL || process.env.OPENROUTER_MODEL || 'openrouter/free').trim();
 const BASE_URL = derivedBaseUrl.replace(/\/+$/, '');
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const FAST_REPLY_MODE = (process.env.FAST_REPLY_MODE || 'false').trim().toLowerCase() !== 'false';
@@ -510,23 +536,11 @@ const ADMIN_API_KEY = String(process.env.ADMIN_API_KEY || '').trim();
 
 const hasProviderKey = (provider: string): boolean => {
   const p = String(provider || '').trim().toLowerCase();
-  if (!p) return false;
-  // Legacy runtime is now OpenRouter-first; OpenAI mode is intentionally disabled.
-  if (p === 'openai') return false;
-  if (p === 'openrouter') return Boolean(String(process.env.OPENROUTER_API_KEY || '').trim());
-  if (p === 'moonshot') return Boolean(String(process.env.MOONSHOT_API_KEY || '').trim());
-  if (p === 'anthropic') return Boolean(String(process.env.ANTHROPIC_API_KEY || '').trim());
-  if (p === 'sarvam') return Boolean(String(process.env.SARVAM_API_KEYS || process.env.SARVAM_API_KEY || '').trim());
-  if (p === 'gemini') return Boolean(String(process.env.GEMINI_API_KEY || '').trim());
-  return false;
+  return p === 'openrouter' && Boolean(String(process.env.OPENROUTER_API_KEY || '').trim());
 };
 
-const resolveUsableProvider = (preferredProvider?: string): string | undefined => {
-  const preferredRaw = String(preferredProvider || '').trim().toLowerCase();
-  const preferred = preferredRaw === 'openai' ? 'openrouter' : preferredRaw;
-  if (preferred && hasProviderKey(preferred)) return preferred;
-  const fallbackOrder = ['openrouter', 'anthropic', 'moonshot', 'sarvam', 'gemini'];
-  return fallbackOrder.find((candidate) => hasProviderKey(candidate));
+const resolveUsableProvider = (_preferredProvider?: string): string | undefined => {
+  return hasProviderKey('openrouter') ? 'openrouter' : undefined;
 };
 
 // Rate limiting configuration
@@ -676,52 +690,27 @@ const verifyTelegramWebhookRequest = (req: express.Request, botId: string): bool
 };
 
 const getActiveAiConfig = (): { provider: string; model: string } => {
-  const preferredRaw = (process.env.AI_PROVIDER || 'openrouter').trim().toLowerCase();
-  const provider = preferredRaw === 'openai' ? 'openrouter' : preferredRaw;
+  const provider = 'openrouter';
   const hasOpenRouterPool = Boolean((process.env.OPENROUTER_MODELS || '').trim());
-  const openRouterDefaultModel = (
-    process.env.DEFAULT_MODEL ||
-    process.env.OPENROUTER_MODEL ||
-    'openrouter/free'
-  ).trim();
-  const model =
-    provider === 'moonshot'
-      ? (process.env.MOONSHOT_MODEL || 'moonshotai/kimi-k2.5').trim()
-      : provider === 'anthropic'
-          ? (process.env.ANTHROPIC_MODEL || 'claude-opus-4-5').trim()
-          : provider === 'openrouter'
-            ? (hasOpenRouterPool ? 'auto-router (intent-based)' : openRouterDefaultModel)
-            : provider === 'sarvam'
-              ? (process.env.SARVAM_MODEL || 'sarvam-m').trim()
-              : (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+  const model = hasOpenRouterPool
+    ? 'auto-router (intent-based)'
+    : DEFAULT_OPENROUTER_MODEL;
   return { provider, model };
 };
 
-const TELEGRAM_DEFAULT_MODEL_SELECTION = (process.env.TELEGRAM_DEFAULT_MODEL_SELECTION || '').trim().toLowerCase();
+const TELEGRAM_DEFAULT_MODEL_SELECTION = (process.env.TELEGRAM_DEFAULT_MODEL_SELECTION || DEFAULT_OPENROUTER_MODEL).trim().toLowerCase();
 
 const mapTelegramModelChoice = (choiceRaw: string): { provider: string; model: string } | null => {
-  const choice = String(choiceRaw || '').trim().toLowerCase();
-  if (
-    choice === 'auto' ||
-    choice === 'openrouter' ||
-    choice === 'openrouter-auto' ||
-    choice === 'openrouter/auto' ||
-    choice === 'openrouter/free'
-  ) {
-    return getActiveAiConfig();
+  const choice = String(choiceRaw || '').trim();
+  if (!choice) return null;
+  const lowered = choice.toLowerCase();
+  if (!lowered || lowered === 'default' || lowered === 'auto' || lowered === 'openrouter' || lowered === 'openrouter/auto') {
+    return { provider: 'openrouter', model: DEFAULT_OPENROUTER_MODEL };
   }
-  if (choice === 'claude-opus-4-5' || choice === 'claude-4.5' || choice === 'claude_opus_4_5') {
-    return { provider: 'anthropic', model: 'claude-opus-4-5' };
+  if (/^[a-z0-9_.-]+\/[a-z0-9_.:-]+$/i.test(choice)) {
+    return { provider: 'openrouter', model: choice };
   }
-  if (
-    choice === 'gemini-3-flash' ||
-    choice === 'gemini-3-flash-preview' ||
-    choice === 'gemini-3-pro-preview' ||
-    choice === 'gemini3flash'
-  ) {
-    return { provider: 'gemini', model: 'gemini-3-flash' };
-  }
-  return null;
+  return { provider: 'openrouter', model: DEFAULT_OPENROUTER_MODEL };
 };
 
 const resolveTelegramAiConfig = (selectedModelRaw: string): { provider: string; model: string } => {
@@ -729,7 +718,7 @@ const resolveTelegramAiConfig = (selectedModelRaw: string): { provider: string; 
   if (fromSelection) return fromSelection;
   const fromDefault = mapTelegramModelChoice(TELEGRAM_DEFAULT_MODEL_SELECTION);
   if (fromDefault) return fromDefault;
-  return getActiveAiConfig();
+  return { provider: 'openrouter', model: DEFAULT_OPENROUTER_MODEL };
 };
 
 // Middleware configuration
@@ -837,6 +826,11 @@ declare global {
   if (!isProduction) {
     console.log(`[WEBHOOK] Local mode detected. Skipping webhook for bot ${botId} and using polling.`);
     return { success: true, data: { ok: true, result: 'Local mode: polling enabled' } };
+  }
+  if (!/^https:\/\//i.test(BASE_URL)) {
+    const message = 'APP_URL/BASE_URL must be an HTTPS public URL in production.';
+    console.error(`[WEBHOOK] ${message} Current BASE_URL=${BASE_URL}`);
+    return { success: false, error: message };
   }
 
   const webhookUrl = `${BASE_URL}/webhook/${botId}`;
@@ -1189,16 +1183,29 @@ const restorePersistedBots = async (): Promise<void> => {
     return;
   }
 
+  let prunedTelegramTokens = 0;
+  let sanitizedTelegramAiConfig = 0;
   for (const tg of state.telegramBots) {
     const botId = String(tg.botId || '').trim();
     const botToken = String(tg.botToken || '').trim();
     if (!botId || !botToken) continue;
+    if (SINGLE_TELEGRAM_TOKEN_ONLY && PRIMARY_TELEGRAM_TOKEN && botToken !== PRIMARY_TELEGRAM_TOKEN) {
+      prunedTelegramTokens += 1;
+      continue;
+    }
 
     botTokens.set(botId, botToken);
     if (tg.botUsername) telegramBotUsernames.set(botId, String(tg.botUsername).trim());
     if (tg.botName) telegramBotNames.set(botId, String(tg.botName).trim());
-    if (tg.aiProvider) telegramBotAiProviders.set(botId, String(tg.aiProvider).trim().toLowerCase());
-    if (tg.aiModel) telegramBotAiModels.set(botId, String(tg.aiModel).trim());
+    const normalizedAi = resolveTelegramAiConfig(String(tg.aiModel || '').trim());
+    telegramBotAiProviders.set(botId, normalizedAi.provider);
+    telegramBotAiModels.set(botId, normalizedAi.model);
+    if (
+      String(tg.aiProvider || '').trim().toLowerCase() !== normalizedAi.provider
+      || String(tg.aiModel || '').trim() !== normalizedAi.model
+    ) {
+      sanitizedTelegramAiConfig += 1;
+    }
     botCredits.set(botId, {
       remainingUsd: Math.max(0, Number(tg.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
       lastChargedAt: Math.max(0, Number(tg.creditLastChargedAt ?? Date.now())),
@@ -1235,6 +1242,16 @@ const restorePersistedBots = async (): Promise<void> => {
         await waitMs(TELEGRAM_WEBHOOK_RESTORE_DELAY_MS);
       }
     }
+  }
+
+  if (prunedTelegramTokens > 0 || sanitizedTelegramAiConfig > 0) {
+    persistBotState();
+  }
+  if (prunedTelegramTokens > 0) {
+    console.warn(`[BOT_STATE] Pruned ${prunedTelegramTokens} persisted Telegram bot token(s) due to SINGLE_TELEGRAM_TOKEN_ONLY policy.`);
+  }
+  if (sanitizedTelegramAiConfig > 0) {
+    console.log(`[BOT_STATE] Normalized AI provider/model to OpenRouter for ${sanitizedTelegramAiConfig} Telegram bot(s).`);
   }
 
   for (const dc of state.discordBots) {
@@ -1362,7 +1379,7 @@ const shouldIsolateFromHistory = (text: string): boolean => {
 const ENTITY_HINT_TERMS = new Set([
   'nasa', 'isro', 'usa', 'uk', 'uae', 'india', 'china',
   'meta', 'google', 'apple', 'microsoft', 'tesla', 'amazon',
-  'openai', 'chatgpt', 'facebook', 'instagram', 'youtube', 'wikipedia'
+  'facebook', 'instagram', 'youtube', 'wikipedia'
 ]);
 
 const isLikelyGenericConceptTopic = (topic: string): boolean => {
@@ -2653,12 +2670,10 @@ Send your exact task, and I will deliver a detailed, mature, implementation-read
         resolvedProvider
       }));
     }
-    const forceSingleProvider = (process.env.AI_FORCE_PROVIDER || 'false').trim().toLowerCase() === 'true';
     const enforcedRuntimeConfig: AIRuntimeConfig = {
       provider: resolvedProvider,
       model: resolvedModel || undefined,
-      // Keep preferred provider first, but allow automatic provider failover by default.
-      forceProvider: forceSingleProvider && Boolean(resolvedProvider)
+      forceProvider: Boolean(resolvedProvider)
     };
     const startedAt = Date.now();
     const resolveTopicSafeFallback = async (): Promise<string> => {
@@ -2855,15 +2870,7 @@ const handleTelegramMessage = async (msg: TelegramBot.Message) => {
     await sendTelegramReply(
       bot,
       chatId,
-      [
-        'Welcome. I am your ChatGPT-style Telegram assistant.',
-        '',
-        'Quick tips:',
-        '- Ask coding, math, writing, planning, and research-style questions.',
-        '- Use /help to view all commands.',
-        '- Use /reset to clear this conversation memory.',
-        '- Use /emoji and /stickers to personalize replies.'
-      ].join('\n'),
+      'Welcome. Send your question and I will provide a direct answer.',
       msg.message_id
     );
     return;
@@ -2944,32 +2951,21 @@ const handleBotMessage = async (botToken: string, msg: any) => {
   if (botId) recordBotIncoming(botId);
 
   console.log(`[BOT_${botToken.substring(0, 8)}] Incoming message from ChatID: ${chatId}`);
-  let selectedProvider = String(botId ? (telegramBotAiProviders.get(botId) || '') : '').trim().toLowerCase();
+  let selectedProvider = 'openrouter';
   let selectedModel = String(botId ? (telegramBotAiModels.get(botId) || '') : '').trim();
-  if (botId && (!selectedProvider || !selectedModel)) {
-    const strictDefault = resolveTelegramAiConfig('');
-    selectedProvider = strictDefault.provider;
-    selectedModel = strictDefault.model;
-    telegramBotAiProviders.set(botId, selectedProvider);
+  if (botId) {
+    if (!selectedModel) {
+      selectedModel = resolveTelegramAiConfig('').model;
+    }
+    telegramBotAiProviders.set(botId, 'openrouter');
     telegramBotAiModels.set(botId, selectedModel);
-    persistBotState();
   }
-  if (!selectedProvider || !selectedModel) {
-    const strictDefault = resolveTelegramAiConfig('');
-    selectedProvider = strictDefault.provider;
-    selectedModel = strictDefault.model;
+  if (!selectedModel) {
+    selectedModel = resolveTelegramAiConfig('').model;
   }
 
   if (incomingCommand === 'start') {
-    const welcome = [
-      'Welcome. I am your ChatGPT-style Telegram assistant.',
-      '',
-      'Quick tips:',
-      '- Ask coding, math, writing, planning, and research-style questions.',
-      '- Use /help to view all commands.',
-      '- Use /reset to clear this conversation memory.',
-      '- Use /emoji and /stickers to personalize replies.'
-    ].join('\n');
+    const welcome = `AI Provider: ${selectedProvider}\nAI Model: ${selectedModel}\n\nSend a message to start chatting with AI.`;
     await botInstance.sendMessage(chatId, welcome);
     if (botId) recordBotResponse(botId, welcome, 0);
     return;
@@ -3036,8 +3032,8 @@ app.post('/webhook/:botId', (req, res) => {
       botTokens.set(match.botId, match.botToken);
       if (match.botUsername) telegramBotUsernames.set(match.botId, String(match.botUsername).trim());
       if (match.botName) telegramBotNames.set(match.botId, String(match.botName).trim());
-      if (match.aiProvider) telegramBotAiProviders.set(match.botId, String(match.aiProvider).trim().toLowerCase());
-      if (match.aiModel) telegramBotAiModels.set(match.botId, String(match.aiModel).trim());
+      telegramBotAiProviders.set(match.botId, 'openrouter');
+      telegramBotAiModels.set(match.botId, String(match.aiModel || DEFAULT_OPENROUTER_MODEL).trim());
       botCredits.set(match.botId, {
         remainingUsd: Math.max(0, Number(match.creditRemainingUsd ?? INITIAL_BOT_CREDIT_USD)),
         lastChargedAt: Math.max(0, Number(match.creditLastChargedAt ?? Date.now())),
@@ -3191,6 +3187,15 @@ const deployTelegramBotForUser = async (args: DeployTelegramBotArgs): Promise<De
     (err as any).body = { error: 'Authentication required' };
     throw err;
   }
+  if (SINGLE_TELEGRAM_TOKEN_ONLY && PRIMARY_TELEGRAM_TOKEN && botToken !== PRIMARY_TELEGRAM_TOKEN) {
+    const err = new Error('Only the configured primary Telegram token is allowed');
+    (err as any).status = 403;
+    (err as any).body = {
+      success: false,
+      error: 'Only the configured primary Telegram token is allowed'
+    };
+    throw err;
+  }
   if (!/^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(botToken)) {
     const err = new Error('Invalid Telegram bot token format');
     (err as any).status = 400;
@@ -3342,10 +3347,16 @@ app.post('/deploy-bot', requireAuth, deployRateLimit, async (req, res) => {
       return res.status(status).json(body);
     }
     console.error(`[DEPLOY] Error deploying bot ${requestedBotId || botToken.split(':')[0]}:`, error);
+    const details = (error as Error)?.message || 'Unknown error';
+    const userMessage = /webhook/i.test(details)
+      ? 'Webhook setup failed. Verify APP_URL/BASE_URL is your public Railway HTTPS URL and try again.'
+      : /fetch failed|enotfound|econnreset|network/i.test(details)
+        ? 'Could not reach Telegram API from backend. Retry in a few seconds.'
+        : details;
     return res.status(500).json({
       success: false,
       error: 'Deployment failed',
-      details: (error as Error).message || 'Unknown error'
+      details: userMessage
     });
   }
 });
@@ -4293,7 +4304,8 @@ setTimeout(() => {
   console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
   console.log('BOT_STATE_FILE:', BOT_STATE_FILE);
   console.log('TELEGRAM_BOT_TOKEN exists:', !!process.env.TELEGRAM_BOT_TOKEN);
-  console.log('GEMINI_API_KEY exists:', !!process.env.GEMINI_API_KEY);
+  console.log('OPENROUTER_API_KEY exists:', !!process.env.OPENROUTER_API_KEY);
+  console.log('SINGLE_TELEGRAM_TOKEN_ONLY:', SINGLE_TELEGRAM_TOKEN_ONLY);
   console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
   console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
   console.log('SMTP_USER exists:', !!process.env.SMTP_USER);

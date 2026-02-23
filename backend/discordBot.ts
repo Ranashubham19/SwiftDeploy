@@ -12,7 +12,6 @@ import {
   SlashCommandStringOption,
   Interaction
 } from 'discord.js';
-import { GoogleGenAI } from '@google/genai';
 
 const envCandidates = [
   path.resolve(process.cwd(), '.env'),
@@ -28,8 +27,9 @@ for (const candidate of envCandidates) {
 const DISCORD_TOKEN = (process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN || '').trim();
 const DISCORD_CLIENT_ID = (process.env.DISCORD_CLIENT_ID || process.env.DISCORD_APPLICATION_ID || '').trim();
 const DISCORD_GUILD_ID = (process.env.DISCORD_GUILD_ID || '').trim();
-const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
-const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3-flash-preview').trim();
+const OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim();
+const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions').trim();
+const OPENROUTER_MODEL = (process.env.OPENROUTER_MODEL || process.env.DEFAULT_MODEL || 'openrouter/free').trim();
 
 const log = (...args: unknown[]) => console.log('[DISCORD_BOT]', ...args);
 const logErr = (...args: unknown[]) => console.error('[DISCORD_BOT][ERROR]', ...args);
@@ -42,12 +42,10 @@ if (!DISCORD_CLIENT_ID) {
   logErr('DISCORD_CLIENT_ID is missing. Set DISCORD_CLIENT_ID in your env file.');
   process.exit(1);
 }
-if (!GEMINI_API_KEY) {
-  logErr('GEMINI_API_KEY is missing. Set your Gemini key in env.');
+if (!OPENROUTER_API_KEY) {
+  logErr('OPENROUTER_API_KEY is missing. Set your OpenRouter key in env.');
   process.exit(1);
 }
-
-const gemini = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 const commands = [
   new SlashCommandBuilder()
@@ -82,20 +80,32 @@ const registerSlashCommands = async () => {
   log('Slash commands registered globally (can take a few minutes to appear).');
 };
 
-const generateGeminiReply = async (prompt: string): Promise<string> => {
+const generateOpenRouterReply = async (prompt: string): Promise<string> => {
   const systemInstruction =
     'You are SwiftDeploy AI assistant. Reply professionally, accurately, and clearly. Keep answers concise unless detail is requested.';
-  const response = await gemini.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      systemInstruction,
+  const response = await fetch(OPENROUTER_BASE_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: prompt }
+      ],
       temperature: 0.2,
-      maxOutputTokens: 500,
-      thinkingConfig: { thinkingBudget: 0 }
-    }
+      max_tokens: 500
+    })
   });
-  return (response.text || 'No response generated.').trim();
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const reason = data?.error?.message || data?.message || `OpenRouter failed (${response.status})`;
+    throw new Error(reason);
+  }
+  const text = data?.choices?.[0]?.message?.content;
+  return (typeof text === 'string' && text.trim()) ? text.trim() : 'No response generated.';
 };
 
 const client = new Client({
@@ -137,7 +147,7 @@ const handleAsk = async (interaction: ChatInputCommandInteraction) => {
 
   try {
     await interaction.deferReply();
-    const answer = await generateGeminiReply(question);
+    const answer = await generateOpenRouterReply(question);
     if (answer.length <= 1990) {
       await interaction.editReply(answer);
       return;
@@ -150,7 +160,7 @@ const handleAsk = async (interaction: ChatInputCommandInteraction) => {
     }
   } catch (error) {
     logErr('Failed to handle /ask:', error);
-    const message = 'AI request failed. Check GEMINI_API_KEY, model access, and bot logs.';
+    const message = 'AI request failed. Check OPENROUTER_API_KEY, model access, and bot logs.';
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(message);
     } else {
@@ -175,8 +185,8 @@ log('Starting Discord bot...');
 log('Env check:', {
   hasDiscordToken: Boolean(DISCORD_TOKEN),
   hasDiscordClientId: Boolean(DISCORD_CLIENT_ID),
-  hasGeminiKey: Boolean(GEMINI_API_KEY),
-  geminiModel: GEMINI_MODEL,
+  hasOpenRouterKey: Boolean(OPENROUTER_API_KEY),
+  openRouterModel: OPENROUTER_MODEL,
   guildScopedCommands: Boolean(DISCORD_GUILD_ID)
 });
 

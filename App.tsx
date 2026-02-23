@@ -15,11 +15,8 @@ import { apiUrl } from './utils/api';
 const mapTelegramModel = (providerRaw: string, modelRaw: string): AIModel => {
   const provider = String(providerRaw || '').trim().toLowerCase();
   const model = String(modelRaw || '').trim().toLowerCase();
-  if (provider === 'anthropic' && model.includes('claude-opus-4-5')) return AIModel.CLAUDE_OPUS_4_5;
-  if (provider === 'openai' && (model.includes('gpt-5.2') || model.includes('gpt-5-2'))) return AIModel.GPT_5_2;
-  if (provider === 'gemini' && model.includes('gemini-3-pro')) return AIModel.GEMINI_3_PRO;
-  if (provider === 'gemini' && model.includes('gemini-3-flash')) return AIModel.GEMINI_3_FLASH;
-  return AIModel.GEMINI_3_FLASH;
+  if (provider === 'openrouter' && model) return AIModel.OPENROUTER_FREE;
+  return AIModel.OPENROUTER_FREE;
 };
 
 const mapApiBot = (raw: any): Bot | null => {
@@ -42,7 +39,7 @@ const mapApiBot = (raw: any): Bot | null => {
   const model =
     platform === Platform.TELEGRAM
       ? mapTelegramModel(String(raw?.aiProvider || ''), String(raw?.aiModel || ''))
-      : AIModel.GEMINI_3_FLASH;
+      : AIModel.OPENROUTER_FREE;
 
   return {
     id,

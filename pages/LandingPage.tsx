@@ -8,8 +8,12 @@ import BrandLogo from '../components/BrandLogo';
 
 const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
   const navigate = useNavigate();
-  const [selectedModel, setSelectedModel] = useState<string>('gpt-5-2');
+  const [selectedModel, setSelectedModel] = useState<string>('openrouter/free');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>(Platform.TELEGRAM);
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const handleDeploymentInit = () => {
     if (user) {
@@ -31,12 +35,10 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
           <BrandLogo />
         </div>
         
-        <div className="hidden lg:flex items-center gap-4 text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-400">
-          <span>Precision AI Operations</span>
-          <span className="text-zinc-600">•</span>
-          <span>Enterprise Grade Security</span>
-          <span className="text-zinc-600">•</span>
-          <span>Rapid Agent Provisioning</span>
+        <div className="hidden lg:flex items-center gap-10">
+          <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="text-sm font-bold text-white uppercase tracking-widest">Home</button>
+          <button onClick={() => scrollToSection('features')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Features</button>
+          <button onClick={() => scrollToSection('contact')} className="text-sm font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-widest">Contact</button>
         </div>
 
         <div className="flex items-center gap-4">
@@ -103,7 +105,7 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             One-Click AI Provisioning
           </div>
           <h1 className="text-5xl md:text-6xl lg:text-7xl font-black tracking-tighter leading-[0.95] mb-8 font-heading uppercase break-words">
-            Deploy <span className="text-cyan-300">OpenClaw</span> <span className="text-zinc-400">Under</span><br /><span className="text-zinc-400">30 Seconds</span>
+            Deploy <span className="text-cyan-300">SwiftDeploy</span> <span className="text-zinc-400">Under</span><br /><span className="text-zinc-400">30 Seconds</span>
           </h1>
           <p className="text-lg md:text-xl text-zinc-400 font-medium max-w-3xl mx-auto leading-relaxed italic">
             Eliminate technical setup and instantly launch your own always-on SwiftDeploy AI instance with a single secure deployment flow.
@@ -119,11 +121,9 @@ const LandingPage: React.FC<{ user: User | null }> = ({ user }) => {
             <h2 className="text-[20px] md:text-[24px] font-bold text-white mb-8 font-heading uppercase italic">
               Which model do you want as default?
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               {[
-                { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', icon: <ICONS.Claude className="w-8 h-8 text-[#D97757]" /> },
-                { id: 'gpt-5-2', label: 'GPT-5.2', icon: <ICONS.GPT className="w-8 h-8" />, iconWrapClass: 'w-8 h-8' },
-                { id: 'gemini-3-pro-preview', label: 'Gemini 3 Flash', icon: <ICONS.Gemini className="w-8 h-8" /> }
+                { id: 'openrouter/free', label: 'OpenRouter (Default)', icon: <ICONS.GPT className="w-8 h-8" />, iconWrapClass: 'w-8 h-8' }
               ].map((m) => (
                 <button
                   key={m.id}

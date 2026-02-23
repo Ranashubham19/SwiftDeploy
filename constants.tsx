@@ -20,17 +20,22 @@ export const ICONS = {
     </svg>
   ),
   GPT: (props: any) => (
-    <img
-      src="/images/brand/gpt-ai-tile.svg"
-      alt="GPT-5.2 AI icon"
-      {...props}
-    />
+    <svg viewBox="0 0 24 24" fill="none" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#ai-chip)" />
+      <path d="M8 8h3v3H8zM13 8h3v3h-3zM8 13h3v3H8zM13 13h3v3h-3z" fill="#0A0F1A" />
+      <defs>
+        <linearGradient id="ai-chip" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#66D9FF" />
+          <stop offset="1" stopColor="#19B8A8" />
+        </linearGradient>
+      </defs>
+    </svg>
   ),
   Gemini: (props: any) => (
     <svg viewBox="0 0 24 24" fill="none" {...props}>
-      <path d="M12 3L14.5 9.5L21 12L14.5 14.5L12 21L9.5 14.5L3 12L9.5 9.5L12 3Z" fill="url(#gemini-gradient)" />
+      <path d="M12 3L14.5 9.5L21 12L14.5 14.5L12 21L9.5 14.5L3 12L9.5 9.5L12 3Z" fill="url(#spark-gradient)" />
       <defs>
-        <linearGradient id="gemini-gradient" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+        <linearGradient id="spark-gradient" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
           <stop stopColor="#4e82ee" />
           <stop offset="0.5" stopColor="#a060f9" />
           <stop offset="1" stopColor="#ef7d6e" />
@@ -102,11 +107,6 @@ export const ICONS = {
   Bots: (props: any) => (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-    </svg>
-  ),
-  Billing: (props: any) => (
-    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" {...props}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v10a2 2 0 002 2z" />
     </svg>
   ),
   Settings: (props: any) => (

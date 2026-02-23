@@ -21,7 +21,7 @@ The application is split into two main components:
 
 ```
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-GEMINI_API_KEY=your_gemini_api_key
+    OPENROUTER_API_KEY=your_openrouter_api_key
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 SESSION_SECRET=your_session_secret
@@ -77,7 +77,7 @@ BACKEND_API_URL=https://your-railway-backend-domain.up.railway.app
 ### Backend (Railway)
 ```
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-GEMINI_API_KEY=your_gemini_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 SESSION_SECRET=your_session_secret_32_chars_minimum

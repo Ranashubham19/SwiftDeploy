@@ -111,7 +111,7 @@ const ConnectDiscord: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ us
         name: result.botName ? `${result.botName}` : `DiscordNode-${bots.length + 1}`,
         platform: Platform.DISCORD,
         token: botToken,
-        model: location.state?.model || AIModel.GPT_5_2,
+        model: location.state?.model || AIModel.OPENROUTER_FREE,
         status: BotStatus.ACTIVE,
         messageCount: 0,
         tokenUsage: 0,
@@ -141,7 +141,7 @@ const ConnectDiscord: React.FC<{ user: any, bots: Bot[], setBots: any }> = ({ us
 
       <div className="text-center mb-8 max-w-4xl px-6">
         <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase">
-          Deploy OpenClaw Under 30 Seconds
+          Deploy OpenClaw in Under 30 Seconds
         </h1>
         <p className="text-zinc-400 text-base md:text-lg mt-3">
           Eliminate technical setup and instantly launch your own always-on OpenClaw AI instance with a single secure deployment flow.

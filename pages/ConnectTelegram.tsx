@@ -20,7 +20,7 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   const stageBotName = urlParams.get('botName') || '';
   const stageBotId = urlParams.get('botId') || '';
   const stageBotLink = stageBotUsername ? `https://t.me/${stageBotUsername}` : '';
-  const selectedModel = String(location.state?.model || '').trim() || AIModel.GEMINI_3_FLASH;
+  const selectedModel = String(location.state?.model || '').trim() || AIModel.OPENROUTER_FREE;
 
   const [token, setToken] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
@@ -97,7 +97,8 @@ const ConnectTelegram: React.FC<{ user: any; bots: Bot[]; setBots: any }> = ({ u
   };
 
   const generateDemoToken = () => {
-    setToken('748291035:AAH_f9xS0v5k2m8Lp9qZ-rY7tW4u3i1o');
+    setToken('');
+    setDeployError('Demo token mode is disabled. Paste your real BotFather token.');
   };
 
   // Existing users who already have an active Telegram bot should land on the success page directly.

@@ -21,7 +21,7 @@ To develop and test your bot locally:
     FRONTEND_URL=http://localhost:3000
     VITE_API_URL=http://localhost:3001
     TELEGRAM_BOT_TOKEN=your_local_bot_token
-    GEMINI_API_KEY=your_gemini_api_key
+    OPENROUTER_API_KEY=your_openrouter_api_key
     PORT=3001
     GOOGLE_CLIENT_ID=your_google_client_id
     GOOGLE_CLIENT_SECRET=your_google_client_secret

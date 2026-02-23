@@ -1,9 +1,6 @@
 
 export enum AIModel {
-  CLAUDE_OPUS_4_5 = 'claude-opus-4-5',
-  GPT_5_2 = 'gpt-5-2',
-  GEMINI_3_FLASH = 'gemini-3-flash-preview',
-  GEMINI_3_PRO = 'gemini-3-pro-preview'
+  OPENROUTER_FREE = 'openrouter/free'
 }
 
 export enum Platform {

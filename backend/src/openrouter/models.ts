@@ -38,7 +38,7 @@ export const MODEL_REGISTRY: Record<ModelRegistryKey, ModelProfile> = {
   smart: {
     key: "smart",
     label: "Smart",
-    id: fromEnv("MODEL_SMART_ID", "openai/gpt-oss-120b:free"),
+    id: fromEnv("MODEL_SMART_ID", "openrouter/free"),
     description: "High quality general reasoning.",
     temperature: 0.4,
     maxTokens: 1800,
