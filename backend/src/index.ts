@@ -46,11 +46,20 @@ const requireEnv = (key: string): string => {
   return value;
 };
 
+const parseBooleanEnv = (key: string, defaultValue: boolean): boolean => {
+  const value = (process.env[key] || "").trim().toLowerCase();
+  if (!value) return defaultValue;
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+};
+
 const TELEGRAM_BOT_TOKEN = requireEnv("TELEGRAM_BOT_TOKEN");
 const OPENROUTER_API_KEY = requireEnv("OPENROUTER_API_KEY");
 const OPENROUTER_BASE_URL =
   (process.env.OPENROUTER_BASE_URL || "").trim() || "https://openrouter.ai/api/v1";
-const APP_URL = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
+const APP_URL = (process.env.APP_URL || process.env.BASE_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
+const TELEGRAM_USE_WEBHOOK = parseBooleanEnv("TELEGRAM_USE_WEBHOOK", false);
 const FRONTEND_URL = (process.env.FRONTEND_URL || "").trim().replace(/\/+$/, "");
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || "").trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
@@ -337,7 +346,10 @@ app.get("/bots", (_req, res) => {
 
 app.post("/webhook", async (req, res) => {
   try {
-    await bot.handleUpdate(req.body, res);
+    await bot.handleUpdate(req.body);
+    if (!res.headersSent) {
+      res.status(200).json({ ok: true });
+    }
   } catch (error) {
     logger.error(
       { error: error instanceof Error ? error.stack : String(error) },
@@ -363,13 +375,41 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       { command: "stop", description: "Stop active streaming response" },
     ]);
 
-    if (APP_URL) {
-      const webhookUrl = `${APP_URL}/webhook`;
-      await bot.telegram.setWebhook(webhookUrl);
-      logger.info({ webhookUrl }, "Webhook mode enabled");
+    const startPolling = async (reason: string): Promise<void> => {
+      await bot.telegram
+        .deleteWebhook({ drop_pending_updates: false })
+        .catch(() => {});
+      await bot.launch({ dropPendingUpdates: false });
+      logger.info({ reason }, "Long-polling mode enabled");
+    };
+
+    if (TELEGRAM_USE_WEBHOOK) {
+      if (!APP_URL) {
+        logger.warn(
+          "TELEGRAM_USE_WEBHOOK=true but APP_URL is missing; falling back to long-polling",
+        );
+        await startPolling("webhook requested without APP_URL");
+      } else {
+        const webhookUrl = `${APP_URL}/webhook`;
+        try {
+          await bot.telegram.setWebhook(webhookUrl, {
+            drop_pending_updates: false,
+          });
+          const webhookInfo = await bot.telegram.getWebhookInfo();
+          logger.info({ webhookUrl, webhookInfo }, "Webhook mode enabled");
+        } catch (error) {
+          logger.error(
+            {
+              webhookUrl,
+              error: error instanceof Error ? error.stack : String(error),
+            },
+            "Webhook setup failed; falling back to long-polling",
+          );
+          await startPolling("webhook setup failed");
+        }
+      }
     } else {
-      await bot.launch();
-      logger.info("Long-polling mode enabled (APP_URL not set)");
+      await startPolling("TELEGRAM_USE_WEBHOOK=false");
     }
   } catch (error) {
     logger.error(
