@@ -84,6 +84,10 @@ const TELEGRAM_API_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.TELEGRAM_API_TIMEOUT_MS || 15000),
 );
+const TELEGRAM_LAUNCH_TIMEOUT_MS = Math.max(
+  30000,
+  Number(process.env.TELEGRAM_LAUNCH_TIMEOUT_MS || 90000),
+);
 const FRONTEND_URL = (process.env.FRONTEND_URL || "").trim().replace(/\/+$/, "");
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || "").trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
@@ -418,7 +422,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
 
     await withTimeout(
       "bot.launch",
-      TELEGRAM_API_TIMEOUT_MS,
+      TELEGRAM_LAUNCH_TIMEOUT_MS,
       bot.launch({ dropPendingUpdates: false }),
     );
     telegramRuntimeMode = "polling";

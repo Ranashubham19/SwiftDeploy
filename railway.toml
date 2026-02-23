@@ -11,6 +11,7 @@ DATABASE_URL = { required = true, description = "PostgreSQL connection string" }
 APP_URL = { required = false, description = "Public Railway URL used for Telegram webhook" }
 TELEGRAM_USE_WEBHOOK = { required = false, description = "Set true to force Telegram webhook mode; false uses long-polling" }
 TELEGRAM_API_TIMEOUT_MS = { required = false, description = "Timeout in ms for Telegram Bot API startup calls" }
+TELEGRAM_LAUNCH_TIMEOUT_MS = { required = false, description = "Timeout in ms specifically for polling launch startup" }
   OPENROUTER_BASE_URL = { required = false, description = "OpenRouter base URL (default: https://openrouter.ai/api/v1)" }
   OPENROUTER_TIMEOUT_MS = { required = false, description = "OpenRouter per-request timeout in ms" }
   OPENROUTER_MAX_RETRIES = { required = false, description = "OpenRouter retry count for 429/5xx" }
