@@ -111,7 +111,7 @@ const CODE_FILE_EXPORT_ENABLED =
 const CODE_FAST_PATH_ENABLED =
   (process.env.CODE_FAST_PATH_ENABLED || "true").toLowerCase() !== "false";
 const codeFencePattern = /```([a-zA-Z0-9_#+.-]*)\n([\s\S]*?)```/g;
-const codeMarkerPattern = /CODE_BEGIN\s*\n([\s\S]*?)\nCODE_END/i;
+const codeMarkerPattern = /CODE_BEGIN\s*([\s\S]*?)\s*CODE_END/i;
 const codeLanguageMap: Record<string, string> = {
   js: "javascript",
   jsx: "javascript",
@@ -508,15 +508,21 @@ const buildCodeFileName = (language: string): string => {
   return `generated_code.${extension}`;
 };
 
+const normalizeCodeMarkers = (text: string): string =>
+  (text || "")
+    .replace(/CODE_BEGIN\s*/gi, "CODE_BEGIN\n")
+    .replace(/\s*CODE_END/gi, "\nCODE_END");
+
 const stripCodeFromDisplay = (text: string): string =>
-  text
+  normalizeCodeMarkers(text)
     .replace(codeFencePattern, "")
     .replace(codeMarkerPattern, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
 const extractCodeArtifact = (rawOutput: string, prompt: string): CodeArtifact | null => {
-  const markerMatch = rawOutput.match(codeMarkerPattern);
+  const normalizedRaw = normalizeCodeMarkers(rawOutput);
+  const markerMatch = normalizedRaw.match(codeMarkerPattern);
   if (markerMatch?.[1]) {
     const markerCode = markerMatch[1].trim();
     if (markerCode) {
@@ -534,7 +540,7 @@ const extractCodeArtifact = (rawOutput: string, prompt: string): CodeArtifact | 
 
   let bestLanguage = "";
   let bestCode = "";
-  for (const match of rawOutput.matchAll(codeFencePattern)) {
+  for (const match of normalizedRaw.matchAll(codeFencePattern)) {
     const language = normalizeCodeLanguage(match[1] || "");
     const code = (match[2] || "").trim();
     if (code.length > bestCode.length) {
@@ -555,18 +561,59 @@ const extractCodeArtifact = (rawOutput: string, prompt: string): CodeArtifact | 
     };
   }
 
-  if (looksLikeCode(rawOutput)) {
+  if (looksLikeCode(normalizedRaw)) {
     const normalizedLanguage = normalizeCodeLanguage(inferLanguageFromPrompt(prompt));
     const extension = codeExtensionMap[normalizedLanguage] || "txt";
     return {
       language: normalizedLanguage,
       extension,
       fileName: buildCodeFileName(normalizedLanguage),
-      code: rawOutput.trim(),
+      code: normalizedRaw.trim(),
     };
   }
 
   return null;
+};
+
+const normalizeCodeFormatting = (language: string, code: string): string => {
+  let normalized = (code || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\t/g, "  ")
+    .trim();
+
+  if (!normalized) return normalized;
+
+  if (!normalized.includes("\n")) {
+    normalized = normalized
+      .replace(/;\s*/g, ";\n")
+      .replace(/\{\s*/g, "{\n")
+      .replace(/\}\s*/g, "}\n")
+      .replace(/\s+(?=def\s+)/g, "\n")
+      .replace(/\s+(?=class\s+)/g, "\n")
+      .replace(/\s+(?=function\s+)/g, "\n")
+      .replace(/\s+(?=if\s+)/g, "\n")
+      .replace(/\s+(?=elif\s+)/g, "\n")
+      .replace(/\s+(?=else:)/g, "\n")
+      .replace(/\s+(?=for\s+)/g, "\n")
+      .replace(/\s+(?=while\s+)/g, "\n")
+      .replace(/\s+(?=return\s+)/g, "\n")
+      .replace(/\n{2,}/g, "\n")
+      .trim();
+  }
+
+  if (language === "python") {
+    normalized = normalized
+      .replace(/\n(else:|elif\s+)/g, "\n$1")
+      .replace(/\n(return\s+)/g, "\n$1");
+  }
+
+  return normalized
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .trim();
 };
 
 const computeResponseTokenLimit = (
@@ -1252,13 +1299,20 @@ export const buildBot = (options: BotBuildOptions): Telegraf<BotContext> => {
 
       let displayOutput = rawModelOutput;
       if (codeArtifact) {
+        codeArtifact.code = normalizeCodeFormatting(codeArtifact.language, codeArtifact.code);
         const explanationOnly = stripCodeFromDisplay(rawModelOutput);
         displayOutput = explanationOnly
           ? `${explanationOnly}\n\nCode:\n${codeArtifact.code}\n\nCode editor file attached: ${codeArtifact.fileName}`
           : `Code:\n${codeArtifact.code}\n\nCode editor file attached: ${codeArtifact.fileName}`;
+      } else if (intent === "coding") {
+        displayOutput = normalizeCodeMarkers(rawModelOutput)
+          .replace(/CODE_BEGIN\s*/gi, "\nCode:\n")
+          .replace(/\s*CODE_END/gi, "\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
       }
 
-      outputBuffer = codeArtifact
+      outputBuffer = codeArtifact || intent === "coding"
         ? formatProfessionalCodeReply(displayOutput)
         : formatProfessionalReply(displayOutput);
 

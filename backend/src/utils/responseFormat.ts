@@ -17,6 +17,12 @@ const normalizeAscii = (input: string): string =>
     .replace(/[ \t]+/g, " ")
     .replace(/\r\n/g, "\n");
 
+const normalizeAsciiPreserveSpacing = (input: string): string =>
+  input
+    .normalize("NFKD")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "")
+    .replace(/\r\n/g, "\n");
+
 const removeMarkdownArtifacts = (input: string): string => {
   let output = input;
   output = output.replace(codeFencePattern, (_match, code: string) => {
@@ -145,7 +151,7 @@ export const formatProfessionalReply = (input: string): string => {
 };
 
 export const formatProfessionalCodeReply = (input: string): string => {
-  const ascii = normalizeAscii(input || "");
+  const ascii = normalizeAsciiPreserveSpacing(input || "");
   const lines = ascii
     .replace(/\r\n/g, "\n")
     .split("\n")
